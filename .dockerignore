@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+*.docx
+*.pdf
+
+# Deployment artifacts
+*.zip
+lambda-deployment.zip
+minimal-resume-parser-layer.zip
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Local test files
+test_*.py
+Anjani.docx
+Anusha.docx
+
+# Scripts (not needed in container)
+create_minimal_layer.py
+test_deployment.py
+single_file_lambda_handler.py
+build_and_deploy.sh
+
+# Git
+.git/
+.gitignore
+
