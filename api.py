@@ -9,10 +9,11 @@ import io
 import base64
 import tempfile
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Security, Depends
+from fastapi.security import APIKeyHeader
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -48,6 +49,26 @@ app.add_middleware(
 # Initialize parser (singleton)
 parser = ResumeParser()
 
+# --- Security ---
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
+
+# Initialize token manager
+from token_manager import TokenManager
+
+# Get token storage path from environment variable (optional)
+TOKEN_STORAGE_PATH = os.environ.get("TOKEN_STORAGE_PATH")
+token_manager = TokenManager(storage_path=TOKEN_STORAGE_PATH)
+
+async def get_api_key(api_key: str = Security(api_key_header)):
+    """Dependency to validate API access token"""
+    if not token_manager.validate_token(api_key):
+        raise HTTPException(
+            status_code=403, 
+            detail="Invalid or expired API access token. Please contact API administrator."
+        )
+    return api_key
+
 # Pydantic models for request/response
 class Base64FileRequest(BaseModel):
     """Request model for base64 encoded files"""
@@ -74,6 +95,23 @@ class ParseResponse(BaseModel):
     error: Optional[str] = None
     processing_time_ms: Optional[float] = None
 
+class BatchParseItem(BaseModel):
+    """Individual result in batch parse response"""
+    filename: str
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    processing_time_ms: Optional[float] = None
+
+class BatchParseResponse(BaseModel):
+    """Response model for batch parsed resumes"""
+    success: bool
+    total_files: int
+    successful: int
+    failed: int
+    total_processing_time_ms: float
+    results: List[BatchParseItem]
+
 @app.get("/", tags=["General"])
 async def root():
     """Root endpoint with API information"""
@@ -86,7 +124,13 @@ async def root():
             "parse_upload": "/parse/upload",
             "parse_base64": "/parse/base64",
             "parse_s3": "/parse/s3",
-            "parse_url": "/parse/url"
+            "parse_url": "/parse/url",
+            "parse_batch": "/parse/batch",
+            "admin_tokens_create": "/admin/tokens/create",
+            "admin_tokens_list": "/admin/tokens",
+            "admin_tokens_get": "/admin/tokens/{token}",
+            "admin_tokens_revoke": "/admin/tokens/revoke",
+            "admin_tokens_delete": "/admin/tokens/{token}"
         }
     }
 
@@ -102,7 +146,8 @@ async def health_check():
 @app.post("/parse/upload", response_model=ParseResponse, tags=["Parse"])
 async def parse_upload(
     file: UploadFile = File(..., description="Resume file (PDF or DOCX)"),
-    include_raw_text: bool = Query(False, description="Include raw text in response")
+    include_raw_text: bool = Query(False, description="Include raw text in response"),
+    api_key: str = Depends(get_api_key)
 ):
     """
     Parse resume from uploaded file
@@ -173,7 +218,10 @@ async def parse_upload(
         )
 
 @app.post("/parse/base64", response_model=ParseResponse, tags=["Parse"])
-async def parse_base64(request: Base64FileRequest = Body(...)):
+async def parse_base64(
+    request: Base64FileRequest = Body(...),
+    api_key: str = Depends(get_api_key)
+):
     """
     Parse resume from base64 encoded content
     
@@ -242,7 +290,10 @@ async def parse_base64(request: Base64FileRequest = Body(...)):
         )
 
 @app.post("/parse/s3", response_model=ParseResponse, tags=["Parse"])
-async def parse_s3(request: S3FileRequest = Body(...)):
+async def parse_s3(
+    request: S3FileRequest = Body(...),
+    api_key: str = Depends(get_api_key)
+):
     """
     Parse resume from S3 bucket
     
@@ -313,7 +364,8 @@ async def parse_s3(request: S3FileRequest = Body(...)):
 @app.post("/parse/url", response_model=ParseResponse, tags=["Parse"])
 async def parse_url(
     url: str = Body(..., embed=True, description="URL to resume file"),
-    include_raw_text: bool = Body(False, embed=True, description="Include raw text in response")
+    include_raw_text: bool = Body(False, embed=True, description="Include raw text in response"),
+    api_key: str = Depends(get_api_key)
 ):
     """
     Parse resume from public URL
@@ -388,6 +440,140 @@ async def parse_url(
             detail=f"Failed to parse resume: {str(e)}"
         )
 
+@app.post("/parse/batch", response_model=BatchParseResponse, tags=["Parse"])
+async def parse_batch(
+    files: List[UploadFile] = File(..., description="Resume files (PDF or DOCX). Maximum 10 files."),
+    include_raw_text: bool = Query(False, description="Include raw text in response"),
+    api_key: str = Depends(get_api_key)
+):
+    """
+    Parse multiple resumes in a single request (up to 10 files)
+    
+    This endpoint allows you to process multiple resumes at once, which is useful for:
+    - Bulk processing of resumes
+    - Batch uploads from job portals
+    - Processing multiple candidates at once
+    
+    Supports:
+    - PDF files
+    - DOCX files
+    - Maximum 10 files per request
+    
+    Returns structured data for each resume including:
+    - Contact information
+    - Professional summary
+    - Work experience
+    - Education
+    - Skills
+    - Certifications
+    
+    Each file is processed independently - if one fails, others will still be processed.
+    """
+    start_time = datetime.now()
+    
+    # Validate file count
+    MAX_FILES = 10
+    if len(files) > MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum {MAX_FILES} files allowed per batch request."
+        )
+    
+    if len(files) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one file is required for batch processing."
+        )
+    
+    results = []
+    successful_count = 0
+    failed_count = 0
+    temp_files = []  # Track temp files for cleanup
+    
+    # Process each file
+    for file in files:
+        file_start_time = datetime.now()
+        temp_file_path = None
+        
+        try:
+            # Validate file extension
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            if file_extension not in ['.pdf', '.docx']:
+                raise ValueError("Invalid file type. Only PDF and DOCX files are supported.")
+            
+            # Read file content
+            content = await file.read()
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
+                tmp_file.write(content)
+                temp_file_path = tmp_file.name
+                temp_files.append(temp_file_path)
+            
+            # Parse resume
+            parsed_resume = parser.parse_resume(temp_file_path)
+            resume_dict = parser.to_dict(parsed_resume)
+            
+            # Optionally remove raw text
+            if not include_raw_text and "raw_text" in resume_dict:
+                resume_dict["raw_text_length"] = len(resume_dict["raw_text"])
+                del resume_dict["raw_text"]
+            
+            processing_time = (datetime.now() - file_start_time).total_seconds() * 1000
+            
+            logger.info(f"Successfully parsed {file.filename} in {processing_time:.2f}ms")
+            
+            results.append(BatchParseItem(
+                filename=file.filename,
+                success=True,
+                data=resume_dict,
+                processing_time_ms=processing_time
+            ))
+            successful_count += 1
+        
+        except Exception as e:
+            processing_time = (datetime.now() - file_start_time).total_seconds() * 1000
+            error_message = str(e)
+            
+            logger.error(f"Error parsing {file.filename}: {error_message}", exc_info=True)
+            
+            results.append(BatchParseItem(
+                filename=file.filename or "unknown",
+                success=False,
+                error=error_message,
+                processing_time_ms=processing_time
+            ))
+            failed_count += 1
+        
+        finally:
+            # Clean up temporary file immediately after processing
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+    
+    # Clean up any remaining temp files (safety measure)
+    for temp_file_path in temp_files:
+        if os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+    
+    total_processing_time = (datetime.now() - start_time).total_seconds() * 1000
+    
+    logger.info(f"Batch processing completed: {successful_count} successful, {failed_count} failed in {total_processing_time:.2f}ms")
+    
+    return BatchParseResponse(
+        success=successful_count > 0,  # True if at least one file succeeded
+        total_files=len(files),
+        successful=successful_count,
+        failed=failed_count,
+        total_processing_time_ms=total_processing_time,
+        results=results
+    )
+
 # Error handlers
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
@@ -402,6 +588,203 @@ async def global_exception_handler(request, exc):
         }
     )
 
+
+# Add after the existing imports and before the existing endpoints
+
+# --- Admin Token Management Endpoints ---
+# Note: These should be protected with an admin token or separate authentication
+
+# Admin API key (you can set this via environment variable)
+ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+
+async def get_admin_key(api_key: str = Security(api_key_header)):
+    """Dependency to validate admin API key"""
+    if not ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="Admin API key not configured. Please set ADMIN_API_KEY environment variable."
+        )
+    if api_key != ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid admin API key. Access denied."
+        )
+    return api_key
+
+# Request/Response models for token management
+class CreateTokenRequest(BaseModel):
+    """Request model for creating a token"""
+    client_name: str = Field(..., description="Client name/identifier")
+    expires_days: Optional[int] = Field(None, description="Number of days until token expires")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class TokenResponse(BaseModel):
+    """Response model for token information"""
+    token: str
+    client_name: str
+    created_at: str
+    expires_at: Optional[str]
+    is_active: bool
+    metadata: Dict[str, Any]
+
+class TokenListResponse(BaseModel):
+    """Response model for listing tokens"""
+    total: int
+    active: int
+    tokens: List[TokenResponse]
+
+class RevokeTokenRequest(BaseModel):
+    """Request model for revoking a token"""
+    token: str = Field(..., description="Token to revoke")
+
+class DeleteTokenRequest(BaseModel):
+    """Request model for deleting a token"""
+    token: str = Field(..., description="Token to delete")
+
+class TokenOperationResponse(BaseModel):
+    """Response model for token operations"""
+    success: bool
+    message: str
+
+# Token Management Endpoints
+@app.post("/admin/tokens/create", response_model=TokenResponse, tags=["Admin"])
+async def create_token(
+    request: CreateTokenRequest,
+    admin_key: str = Depends(get_admin_key)
+):
+    """
+    Create a new access token for a client
+    
+    Requires admin authentication.
+    """
+    try:
+        token_info = token_manager.create_access_token(
+            client_name=request.client_name,
+            expires_days=request.expires_days,
+            metadata=request.metadata
+        )
+        return TokenResponse(**token_info)
+    except Exception as e:
+        logger.error(f"Error creating token: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create token: {str(e)}"
+        )
+
+@app.get("/admin/tokens", response_model=TokenListResponse, tags=["Admin"])
+async def list_tokens(
+    active_only: bool = Query(False, description="List only active tokens"),
+    admin_key: str = Depends(get_admin_key)
+):
+    """
+    List all access tokens
+    
+    Requires admin authentication.
+    """
+    try:
+        tokens = token_manager.list_tokens(active_only=active_only)
+        active_count = sum(1 for t in tokens if t.get("is_active", False))
+        
+        return TokenListResponse(
+            total=len(tokens),
+            active=active_count,
+            tokens=[TokenResponse(**token) for token in tokens]
+        )
+    except Exception as e:
+        logger.error(f"Error listing tokens: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list tokens: {str(e)}"
+        )
+
+@app.get("/admin/tokens/{token}", response_model=TokenResponse, tags=["Admin"])
+async def get_token_info(
+    token: str,
+    admin_key: str = Depends(get_admin_key)
+):
+    """
+    Get information about a specific token
+    
+    Requires admin authentication.
+    """
+    try:
+        token_info = token_manager.get_token_info(token)
+        if not token_info:
+            raise HTTPException(
+                status_code=404,
+                detail="Token not found"
+            )
+        return TokenResponse(**token_info)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting token info: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get token info: {str(e)}"
+        )
+
+@app.post("/admin/tokens/revoke", response_model=TokenOperationResponse, tags=["Admin"])
+async def revoke_token(
+    request: RevokeTokenRequest,
+    admin_key: str = Depends(get_admin_key)
+):
+    """
+    Revoke (deactivate) an access token
+    
+    Requires admin authentication.
+    """
+    try:
+        success = token_manager.revoke_token(request.token)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail="Token not found"
+            )
+        return TokenOperationResponse(
+            success=True,
+            message="Token revoked successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error revoking token: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to revoke token: {str(e)}"
+        )
+
+@app.delete("/admin/tokens/{token}", response_model=TokenOperationResponse, tags=["Admin"])
+async def delete_token(
+    token: str,
+    admin_key: str = Depends(get_admin_key)
+):
+    """
+    Permanently delete an access token
+    
+    Requires admin authentication.
+    """
+    try:
+        success = token_manager.delete_token(token)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail="Token not found"
+            )
+        return TokenOperationResponse(
+            success=True,
+            message="Token deleted successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting token: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete token: {str(e)}"
+        )
+
+
 if __name__ == "__main__":
     # Run with uvicorn
     uvicorn.run(
@@ -411,4 +794,3 @@ if __name__ == "__main__":
         reload=True,  # Auto-reload on code changes (dev only)
         log_level="info"
     )
-

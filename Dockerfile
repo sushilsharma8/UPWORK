@@ -25,6 +25,8 @@ RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords')"
 COPY resume_parser_improved.py .
 COPY api.py .
 COPY lambda_api_handler.py .
+COPY token_manager.py .
+COPY token_storage.py .
 
 # Set the CMD to FastAPI Lambda handler
 CMD ["lambda_api_handler.lambda_handler"]

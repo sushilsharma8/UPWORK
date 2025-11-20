@@ -38,6 +38,7 @@ dist/
 test_*.py
 Anjani.docx
 Anusha.docx
+.env
 
 # Scripts (not needed in container)
 create_minimal_layer.py
