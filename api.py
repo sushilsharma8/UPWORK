@@ -190,7 +190,8 @@ async def parse_upload(
             
             # Optionally remove raw text
             if not include_raw_text and "raw_text" in resume_dict:
-                resume_dict["raw_text_length"] = len(resume_dict["raw_text"])
+                raw_text_value = resume_dict.get("raw_text") or ""
+                resume_dict["raw_text_length"] = len(raw_text_value)
                 del resume_dict["raw_text"]
             
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -262,7 +263,8 @@ async def parse_base64(
             
             # Optionally remove raw text
             if not request.include_raw_text and "raw_text" in resume_dict:
-                resume_dict["raw_text_length"] = len(resume_dict["raw_text"])
+                raw_text_value = resume_dict.get("raw_text") or ""
+                resume_dict["raw_text_length"] = len(raw_text_value)
                 del resume_dict["raw_text"]
             
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -334,7 +336,8 @@ async def parse_s3(
             
             # Optionally remove raw text
             if not request.include_raw_text and "raw_text" in resume_dict:
-                resume_dict["raw_text_length"] = len(resume_dict["raw_text"])
+                raw_text_value = resume_dict.get("raw_text") or ""
+                resume_dict["raw_text_length"] = len(raw_text_value)
                 del resume_dict["raw_text"]
             
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -413,7 +416,8 @@ async def parse_url(
             
             # Optionally remove raw text
             if not include_raw_text and "raw_text" in resume_dict:
-                resume_dict["raw_text_length"] = len(resume_dict["raw_text"])
+                raw_text_value = resume_dict.get("raw_text") or ""
+                resume_dict["raw_text_length"] = len(raw_text_value)
                 del resume_dict["raw_text"]
             
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -516,7 +520,8 @@ async def parse_batch(
             
             # Optionally remove raw text
             if not include_raw_text and "raw_text" in resume_dict:
-                resume_dict["raw_text_length"] = len(resume_dict["raw_text"])
+                raw_text_value = resume_dict.get("raw_text") or ""
+                resume_dict["raw_text_length"] = len(raw_text_value)
                 del resume_dict["raw_text"]
             
             processing_time = (datetime.now() - file_start_time).total_seconds() * 1000
