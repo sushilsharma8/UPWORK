@@ -1,0 +1,374 @@
+{
+	"info": {
+		"_postman_id": "resume-parser-api-collection",
+		"name": "Resume Parser API",
+		"description": "Complete API collection for Resume Parser with token management",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "General",
+			"item": [
+				{
+					"name": "Root - API Info",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/",
+							"host": ["{{base_url}}"],
+							"path": [""]
+						}
+					}
+				},
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Parse",
+			"item": [
+				{
+					"name": "Parse Upload",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "include_raw_text",
+									"value": "false",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/parse/upload?include_raw_text=false",
+							"host": ["{{base_url}}"],
+							"path": ["parse", "upload"],
+							"query": [
+								{
+									"key": "include_raw_text",
+									"value": "false"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Parse Base64",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"file_content\": \"base64_encoded_file_content_here\",\n  \"file_name\": \"resume.pdf\",\n  \"include_raw_text\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/parse/base64",
+							"host": ["{{base_url}}"],
+							"path": ["parse", "base64"]
+						}
+					}
+				},
+				{
+					"name": "Parse S3",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"s3_bucket\": \"your-bucket-name\",\n  \"s3_key\": \"path/to/resume.pdf\",\n  \"include_raw_text\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/parse/s3",
+							"host": ["{{base_url}}"],
+							"path": ["parse", "s3"]
+						}
+					}
+				},
+				{
+					"name": "Parse URL",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://example.com/resume.pdf\",\n  \"include_raw_text\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/parse/url",
+							"host": ["{{base_url}}"],
+							"path": ["parse", "url"]
+						}
+					}
+				},
+				{
+					"name": "Parse Batch (Up to 10 files)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "files",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "files",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "include_raw_text",
+									"value": "false",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/parse/batch?include_raw_text=false",
+							"host": ["{{base_url}}"],
+							"path": ["parse", "batch"],
+							"query": [
+								{
+									"key": "include_raw_text",
+									"value": "false"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Token Management",
+			"item": [
+				{
+					"name": "Create Token",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{admin_api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"client_name\": \"TCS\",\n  \"expires_at\": \"2026-09-15\",\n  \"metadata\": {\n    \"contact_email\": \"client@example.com\",\n    \"notes\": \"Production client\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/admin/tokens/create",
+							"host": ["{{base_url}}"],
+							"path": ["admin", "tokens", "create"]
+						}
+					}
+				},
+				{
+					"name": "List All Tokens",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{admin_api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/admin/tokens?active_only=false",
+							"host": ["{{base_url}}"],
+							"path": ["admin", "tokens"],
+							"query": [
+								{
+									"key": "active_only",
+									"value": "false"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "List Active Tokens Only",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{admin_api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/admin/tokens?active_only=true",
+							"host": ["{{base_url}}"],
+							"path": ["admin", "tokens"],
+							"query": [
+								{
+									"key": "active_only",
+									"value": "true"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Token Info",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{admin_api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/admin/tokens/{{token}}",
+							"host": ["{{base_url}}"],
+							"path": ["admin", "tokens", "{{token}}"]
+						}
+					}
+				},
+				{
+					"name": "Revoke Token",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{admin_api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"your-token-to-revoke\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/admin/tokens/revoke",
+							"host": ["{{base_url}}"],
+							"path": ["admin", "tokens", "revoke"]
+						}
+					}
+				},
+				{
+					"name": "Delete Token",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{admin_api_key}}",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/admin/tokens/{{token}}",
+							"host": ["{{base_url}}"],
+							"path": ["admin", "tokens", "{{token}}"]
+						}
+					}
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://your-api-gateway-endpoint.com",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "your-client-api-key-here",
+			"type": "string"
+		},
+		{
+			"key": "admin_api_key",
+			"value": "your-admin-api-key-here",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "token-to-test",
+			"type": "string"
+		}
+	]
+}
+

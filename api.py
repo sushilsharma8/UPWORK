@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 
 from resume_parser_improved import ResumeParser
+from token_manager import TokenManager
 
 # Configure logging
 logging.basicConfig(
@@ -46,19 +47,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize parser (singleton)
 parser = ResumeParser()
 
-# --- Security ---
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
-# Initialize token manager
-from token_manager import TokenManager
-
-# Get token storage path from environment variable (optional)
-TOKEN_STORAGE_PATH = os.environ.get("TOKEN_STORAGE_PATH")
-token_manager = TokenManager(storage_path=TOKEN_STORAGE_PATH)
+# Token storage: use env path, or /tmp in Lambda (read-only /var/task)
+_token_path = os.environ.get("TOKEN_STORAGE_PATH")
+if _token_path is None and (os.environ.get("AWS_LAMBDA_FUNCTION_NAME") or os.environ.get("LAMBDA_TASK_ROOT")):
+    _token_path = "/tmp/tokens.json"
+token_manager = TokenManager(storage_path=_token_path)
 
 async def get_api_key(api_key: str = Security(api_key_header)):
     """Dependency to validate API access token"""
@@ -147,7 +145,7 @@ async def health_check():
 async def parse_upload(
     file: UploadFile = File(..., description="Resume file (PDF or DOCX)"),
     include_raw_text: bool = Query(False, description="Include raw text in response"),
-    api_key: str = Depends(get_api_key)
+    # api_key: str = Depends(get_api_key)
 ):
     """
     Parse resume from uploaded file
@@ -594,12 +592,6 @@ async def global_exception_handler(request, exc):
     )
 
 
-# Add after the existing imports and before the existing endpoints
-
-# --- Admin Token Management Endpoints ---
-# Note: These should be protected with an admin token or separate authentication
-
-# Admin API key (you can set this via environment variable)
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 async def get_admin_key(api_key: str = Security(api_key_header)):
@@ -620,7 +612,7 @@ async def get_admin_key(api_key: str = Security(api_key_header)):
 class CreateTokenRequest(BaseModel):
     """Request model for creating a token"""
     client_name: str = Field(..., description="Client name/identifier")
-    expires_days: Optional[int] = Field(None, description="Number of days until token expires")
+    expires_at: Optional[str] = Field(None, description="Expiry date (YYYY-MM-DD or full ISO datetime). Omit for no expiration.")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
 class TokenResponse(BaseModel):
@@ -665,7 +657,7 @@ async def create_token(
     try:
         token_info = token_manager.create_access_token(
             client_name=request.client_name,
-            expires_days=request.expires_days,
+            expires_at=request.expires_at,
             metadata=request.metadata
         )
         return TokenResponse(**token_info)

@@ -138,11 +138,7 @@ class TokenStorage:
 
     def add_token(self, token: str, client_name: str, expires_at: Optional[str] = None,
                   metadata: Optional[Dict] = None) -> Dict:
-        """
-        Add a new token to storage.
-
-        expires_at: Expiry date as YYYY-MM-DD or full ISO datetime. None for no expiration.
-        """
+        """Add a new token to storage. expires_at: YYYY-MM-DD or full ISO. None for no expiration."""
         tokens = self._read_tokens()
         if expires_at and expires_at.strip():
             expires_at = expires_at.strip()
@@ -158,45 +154,21 @@ class TokenStorage:
             "is_active": True,
             "metadata": metadata or {}
         }
-        
         tokens[token] = token_info
         self._write_tokens(tokens)
-        
         logger.info(f"Added token for client: {client_name}")
         return token_info
-    
+
     def get_token(self, token: str) -> Optional[Dict]:
-        """
-        Get token information
-        
-        Args:
-            token: The access token string
-        
-        Returns:
-            Token information dictionary or None if not found
-        """
+        """Get token information."""
         tokens = self._read_tokens()
         return tokens.get(token)
-    
+
     def validate_token(self, token: str) -> bool:
-        """
-        Validate if a token is valid and active
-        
-        Args:
-            token: The access token string
-        
-        Returns:
-            True if token is valid and active, False otherwise
-        """
+        """Validate if a token is valid and active."""
         token_info = self.get_token(token)
-        
-        if not token_info:
+        if not token_info or not token_info.get("is_active", False):
             return False
-        
-        if not token_info.get("is_active", False):
-            return False
-        
-        # Check expiration
         expires_at = token_info.get("expires_at")
         if expires_at:
             try:
@@ -207,66 +179,33 @@ class TokenStorage:
             except Exception as e:
                 logger.error(f"Error parsing expiration date: {e}")
                 return False
-        
         return True
-    
+
     def revoke_token(self, token: str) -> bool:
-        """
-        Revoke (deactivate) a token
-        
-        Args:
-            token: The access token string
-        
-        Returns:
-            True if token was revoked, False if not found
-        """
+        """Revoke (deactivate) a token."""
         tokens = self._read_tokens()
-        
         if token not in tokens:
             return False
-        
         tokens[token]["is_active"] = False
         tokens[token]["revoked_at"] = datetime.utcnow().isoformat()
         self._write_tokens(tokens)
-        
         logger.info(f"Revoked token: {token[:8]}...")
         return True
-    
+
     def list_tokens(self, active_only: bool = False) -> List[Dict]:
-        """
-        List all tokens
-        
-        Args:
-            active_only: If True, only return active tokens
-        
-        Returns:
-            List of token information dictionaries
-        """
+        """List all tokens."""
         tokens = self._read_tokens()
         token_list = list(tokens.values())
-        
         if active_only:
             token_list = [t for t in token_list if t.get("is_active", False)]
-        
         return token_list
-    
+
     def delete_token(self, token: str) -> bool:
-        """
-        Permanently delete a token from storage
-        
-        Args:
-            token: The access token string
-        
-        Returns:
-            True if token was deleted, False if not found
-        """
+        """Permanently delete a token from storage."""
         tokens = self._read_tokens()
-        
         if token not in tokens:
             return False
-        
         del tokens[token]
         self._write_tokens(tokens)
-        
         logger.info(f"Deleted token: {token[:8]}...")
         return True

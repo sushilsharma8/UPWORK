@@ -7,7 +7,7 @@ Provides token generation and management functionality
 import secrets
 import string
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from token_storage import TokenStorage
 
 logger = logging.getLogger(__name__)
@@ -34,39 +34,22 @@ class TokenManager:
         Returns:
             A secure random token string
         """
-        # Use alphanumeric characters for tokens
         alphabet = string.ascii_letters + string.digits
         token = ''.join(secrets.choice(alphabet) for _ in range(length))
         return token
     
-    def create_access_token(self, client_name: str, expires_days: Optional[int] = None,
-                           metadata: Optional[Dict] = None) -> Dict:
+    def create_access_token(self, client_name: str, expires_at: Optional[str] = None,
+                            metadata: Optional[Dict] = None) -> Dict:
         """
-        Create a new access token for a client
-        
-        Args:
-            client_name: Name/identifier for the client (e.g., "TCS", "Salesforce")
-            expires_days: Number of days until token expires (None for no expiration)
-            metadata: Additional metadata (e.g., {"contact_email": "client@example.com"})
-        
-        Returns:
-            Dictionary containing token and metadata:
-            {
-                "token": "generated_token_string",
-                "client_name": "TCS",
-                "created_at": "2024-01-01T00:00:00",
-                "expires_at": "2024-12-31T23:59:59" or None,
-                ...
-            }
+        Create a new access token for a client.
+
+        expires_at: Expiry date (YYYY-MM-DD or full ISO). None for no expiration.
         """
-        # Generate token
         token = self.generate_token()
-        
-        # Store token
         token_info = self.storage.add_token(
             token=token,
             client_name=client_name,
-            expires_days=expires_days,
+            expires_at=expires_at,
             metadata=metadata
         )
         
@@ -109,7 +92,7 @@ class TokenManager:
         """
         return self.storage.revoke_token(token)
     
-    def list_tokens(self, active_only: bool = False) -> list:
+    def list_tokens(self, active_only: bool = False) -> List[Dict]:
         """
         List all tokens
         

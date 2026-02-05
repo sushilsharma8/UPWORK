@@ -19,11 +19,11 @@ Examples:
   # Create a token for TCS (no expiration)
   python create_token.py --client TCS
 
-  # Create a token for Salesforce with 365 days expiration
-  python create_token.py --client Salesforce --expires-days 365
+  # Create a token with expiry date
+  python create_token.py --client Salesforce --expires-at 2026-09-15
 
   # Create a token with metadata
-  python create_token.py --client "Acme Corp" --expires-days 180 --metadata '{"contact":"john@acme.com"}'
+  python create_token.py --client "Acme Corp" --expires-at 2026-12-31 --metadata '{"contact":"john@acme.com"}'
 
   # List all tokens
   python create_token.py --list
@@ -41,7 +41,7 @@ Examples:
     
     # Token creation
     parser.add_argument("--client", "-c", type=str, help="Client name/identifier (e.g., TCS, Salesforce)")
-    parser.add_argument("--expires-days", "-e", type=int, help="Number of days until token expires (optional)")
+    parser.add_argument("--expires-at", "-e", type=str, help="Expiry date YYYY-MM-DD (e.g. 2026-09-15). Omit for no expiration.")
     parser.add_argument("--metadata", "-m", type=str, help="JSON string with additional metadata")
     parser.add_argument("--storage-path", "-s", type=str, help="Path to token storage file (optional)")
     
@@ -117,7 +117,7 @@ Examples:
     try:
         token_info = token_manager.create_access_token(
             client_name=args.client,
-            expires_days=args.expires_days,
+            expires_at=args.expires_at,
             metadata=metadata
         )
         

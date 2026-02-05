@@ -14,6 +14,10 @@ from datetime import datetime
 import spacy
 import pdfplumber
 import docx
+from docx.oxml.text.paragraph import CT_P
+from docx.oxml.table import CT_Tbl
+from docx.table import Table as DocxTable
+from docx.text.paragraph import Paragraph as DocxParagraph
 import nltk
 from nltk.corpus import stopwords
 
@@ -100,7 +104,8 @@ SECTION_KEYWORDS = {
         "credentials", "professional certifications"
     ],
     "projects": [
-        "projects", "key projects", "notable projects", "project experience"
+        "projects", "key projects", "notable projects", "project experience",
+        "recent projects", "personal projects", "academic projects", "project details"
     ],
     "awards": [
         "awards", "honors", "achievements", "recognition", "accomplishments"
@@ -404,22 +409,68 @@ class ResumeParser:
         return any(keyword in text_lower for keyword in self._job_title_keywords_set)
         
     def extract_text_from_pdf(self, path: str) -> str:
-        """Extract text from PDF with improved error handling."""
+        """Extract text from PDF with improved error handling.
+        
+        Extracts both regular text and table content to ensure tabular data
+        (common in skills, education, work history sections) is captured.
+        """
         try:
-            text = ""
+            text_parts = []
             with pdfplumber.open(path) as pdf:
                 for page_num, page in enumerate(pdf.pages):
                     try:
+                        # Extract regular text
                         page_text = page.extract_text()
                         if page_text:
-                            text += page_text + "\n"
+                            text_parts.append(page_text)
+                        
+                        # Extract tables - common in resumes for skills, education, etc.
+                        try:
+                            tables = page.extract_tables()
+                            if tables:
+                                for table in tables:
+                                    if table:
+                                        table_text = self._format_table_as_text(table)
+                                        if table_text:
+                                            text_parts.append(table_text)
+                        except Exception as e:
+                            logger.warning(f"Error extracting tables from page {page_num + 1}: {e}")
+                            
                     except Exception as e:
                         logger.warning(f"Error extracting text from page {page_num + 1}: {e}")
                         continue
-            return text.strip()
+            return "\n".join(text_parts).strip()
         except Exception as e:
             logger.error(f"Error reading PDF {path}: {e}")
             return ""
+    
+    def _format_table_as_text(self, table: List[List[str]]) -> str:
+        """Convert a table (list of rows) into readable text format.
+        
+        Handles common resume table formats:
+        - Two-column tables (label: value)
+        - Multi-column skill/technology tables
+        - Education/experience tables with dates
+        """
+        if not table:
+            return ""
+        
+        lines = []
+        for row in table:
+            if not row:
+                continue
+            # Filter out None/empty cells and strip whitespace
+            cells = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
+            if cells:
+                # Join cells with appropriate separator
+                # For two-column tables (common label:value format), use colon
+                if len(cells) == 2:
+                    lines.append(f"{cells[0]}: {cells[1]}")
+                else:
+                    # For multi-column, use pipe or comma separation
+                    lines.append(" | ".join(cells))
+        
+        return "\n".join(lines)
 
     def extract_text_from_docx(self, path: str) -> str:
         """Extract text from DOCX with improved error handling.
@@ -428,6 +479,9 @@ class ResumeParser:
         phone number in the document header. By default, `python-docx` exposes
         body paragraphs via `doc.paragraphs` but header/footer text must be
         read explicitly from `section.header` / `section.footer`.
+        
+        Also extracts table content which is common in resumes for skills,
+        education, and work history sections.
         """
         try:
             doc = docx.Document(path)
@@ -448,13 +502,36 @@ class ResumeParser:
                 # Header parsing issues shouldn't break entire extraction
                 logger.warning(f"Error reading DOCX headers for {path}: {e}")
 
-            # 2) Collect main body paragraphs
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if text:
-                    parts.append(text)
+            # 2) Collect body content in document order (paragraphs and tables interleaved).
+            # Using doc.paragraphs + doc.tables separately loses order: all paragraphs come
+            # first, then all tables, so section detection (find_sections) misassigns content.
+            # Iterating body elements in order makes DOCX behave like PDF and fixes missing data.
+            try:
+                for child in doc.element.body:
+                    if isinstance(child, CT_P):
+                        para = DocxParagraph(child, doc)
+                        text = para.text.strip()
+                        if text:
+                            parts.append(text)
+                    elif isinstance(child, CT_Tbl):
+                        table = DocxTable(child, doc)
+                        table_data = []
+                        for row in table.rows:
+                            row_data = []
+                            for cell in row.cells:
+                                cell_text = cell.text.strip()
+                                if cell_text:
+                                    row_data.append(cell_text)
+                            if row_data:
+                                table_data.append(row_data)
+                        if table_data:
+                            table_text = self._format_table_as_text(table_data)
+                            if table_text:
+                                parts.append(table_text)
+            except Exception as e:
+                logger.warning(f"Error reading DOCX body in order for {path}: {e}")
 
-            # 3) Optionally collect footer text (rarely contains contact info,
+            # 4) Optionally collect footer text (rarely contains contact info,
             # but cheap to include and may add missing details)
             try:
                 for section in doc.sections:
@@ -1882,6 +1959,115 @@ class ResumeParser:
         
         return min(1.0, score / max_score)
 
+    def extract_projects(self, text: str, sections: Optional[Dict[str, str]] = None) -> List[str]:
+        """Extract project information from resume.
+        
+        Looks for project entries in the projects section or identifies project
+        patterns throughout the document.
+        """
+        projects = []
+        
+        # Get projects section if available
+        if sections is None:
+            sections = self.find_sections(text)
+        
+        projects_section = sections.get("projects", "")
+        
+        if projects_section:
+            # Parse project entries from the section
+            lines = projects_section.split('\n')
+            current_project = []
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    # Empty line might separate projects
+                    if current_project:
+                        project_text = ' '.join(current_project).strip()
+                        if project_text and len(project_text) > 10:
+                            projects.append(project_text)
+                        current_project = []
+                    continue
+                
+                # Check if this line starts a new project
+                # Common patterns: "Project Name:", "Project: Name", "ProjectName -", bold/caps project names
+                is_new_project = False
+                
+                # Pattern 1: Line starts with "Project" keyword
+                if re.match(r'^(?:Project|Client)[:\s-]+', line, re.IGNORECASE):
+                    is_new_project = True
+                
+                # Pattern 2: Line is mostly uppercase or title case (likely a project name)
+                elif (line.isupper() or 
+                      (line[0].isupper() and ':' in line[:30]) or
+                      re.match(r'^[A-Z][A-Za-z0-9\s&-]+(?::|$)', line)):
+                    # Check if it looks like a project name (not a description)
+                    if len(line) < 100 and not line.lower().startswith(('responsible', 'worked', 'developed', 'created', 'implemented', 'designed', 'built', 'managed')):
+                        is_new_project = True
+                
+                # Pattern 3: Bullet point with capitalized text (new project entry)
+                elif re.match(r'^[•\-\*]\s*[A-Z]', line):
+                    # Could be a new project or a description point
+                    # If it's short and doesn't start with action verbs, likely a project name
+                    clean_line = re.sub(r'^[•\-\*]\s*', '', line)
+                    if len(clean_line) < 60 and not any(clean_line.lower().startswith(v) for v in 
+                        ['responsible', 'worked', 'developed', 'created', 'implemented', 'designed', 'built', 'managed', 'analyzed', 'prepared']):
+                        is_new_project = True
+                
+                if is_new_project:
+                    # Save previous project
+                    if current_project:
+                        project_text = ' '.join(current_project).strip()
+                        if project_text and len(project_text) > 10:
+                            projects.append(project_text)
+                    current_project = [line]
+                else:
+                    # Continue current project description
+                    current_project.append(line)
+            
+            # Don't forget the last project
+            if current_project:
+                project_text = ' '.join(current_project).strip()
+                if project_text and len(project_text) > 10:
+                    projects.append(project_text)
+        
+        # If no projects found in section, try to find project patterns in text
+        if not projects:
+            # Look for "Project:" or "Project Name:" patterns
+            project_patterns = [
+                r'(?:Project|Client)[:\s-]+([A-Z][A-Za-z0-9\s&-]+?)(?:\n|:)',
+                r'\b([A-Z][A-Za-z0-9\s&-]+)\s*[-–:]\s*(?:Worked|Responsible|Developed|Built|Created)',
+            ]
+            
+            for pattern in project_patterns:
+                matches = re.findall(pattern, text)
+                for match in matches:
+                    if isinstance(match, str):
+                        project_name = match.strip()
+                        if project_name and 3 < len(project_name) < 100:
+                            projects.append(project_name)
+        
+        # Clean up and deduplicate
+        cleaned_projects = []
+        seen = set()
+        for project in projects:
+            # Clean up the project text
+            project = re.sub(r'\s+', ' ', project).strip()
+            # Remove trailing colons
+            project = project.rstrip(':')
+            
+            # Skip if too short, duplicate, or looks like a section header
+            project_lower = project.lower()
+            if (len(project) < 10 or 
+                project_lower in seen or
+                project_lower in ['projects', 'key projects', 'recent projects', 'project experience']):
+                continue
+            
+            seen.add(project_lower)
+            cleaned_projects.append(project)
+        
+        return cleaned_projects
+
     def parse_resume(self, file_path: str) -> ParsedResume:
         """Parse resume from file with comprehensive extraction."""
         if not os.path.isfile(file_path):
@@ -1977,6 +2163,9 @@ class ResumeParser:
         # Remove duplicates and clean up
         certifications = list(set([cert.strip() for cert in certifications if cert.strip()]))
         
+        # Extract projects
+        projects = self.extract_projects(text, sections)
+        
         # Create parsed resume object
         parsed_resume = ParsedResume(
             file_path=file_path,
@@ -1986,6 +2175,7 @@ class ResumeParser:
             education=education,
             skills=skills,
             certifications=certifications,
+            projects=projects,
             raw_text=text
         )
         

@@ -1,0 +1,1024 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Resume Parser API",
+    "description": "Parse resumes (PDF/DOCX) and extract structured information using NLP",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "General"
+        ],
+        "summary": "Root",
+        "description": "Root endpoint with API information",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "General"
+        ],
+        "summary": "Health Check",
+        "description": "Health check endpoint",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/parse/upload": {
+      "post": {
+        "tags": [
+          "Parse"
+        ],
+        "summary": "Parse Upload",
+        "description": "Parse resume from uploaded file\n\nSupports:\n- PDF files\n- DOCX files\n\nReturns structured data including:\n- Contact information\n- Professional summary\n- Work experience\n- Education\n- Skills\n- Certifications",
+        "operationId": "parse_upload_parse_upload_post",
+        "parameters": [
+          {
+            "name": "include_raw_text",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include raw text in response",
+              "default": false,
+              "title": "Include Raw Text"
+            },
+            "description": "Include raw text in response"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_upload_parse_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/parse/base64": {
+      "post": {
+        "tags": [
+          "Parse"
+        ],
+        "summary": "Parse Base64",
+        "description": "Parse resume from base64 encoded content\n\nUseful for:\n- Client-side file encoding\n- API integrations\n- Mobile applications",
+        "operationId": "parse_base64_parse_base64_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Base64FileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/parse/s3": {
+      "post": {
+        "tags": [
+          "Parse"
+        ],
+        "summary": "Parse S3",
+        "description": "Parse resume from S3 bucket\n\nRequires:\n- AWS credentials configured\n- S3 read permissions",
+        "operationId": "parse_s3_parse_s3_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/S3FileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/parse/url": {
+      "post": {
+        "tags": [
+          "Parse"
+        ],
+        "summary": "Parse Url",
+        "description": "Parse resume from public URL\n\nDownloads and parses resume from a publicly accessible URL",
+        "operationId": "parse_url_parse_url_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_url_parse_url_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/parse/batch": {
+      "post": {
+        "tags": [
+          "Parse"
+        ],
+        "summary": "Parse Batch",
+        "description": "Parse multiple resumes in a single request (up to 10 files)\n\nThis endpoint allows you to process multiple resumes at once, which is useful for:\n- Bulk processing of resumes\n- Batch uploads from job portals\n- Processing multiple candidates at once\n\nSupports:\n- PDF files\n- DOCX files\n- Maximum 10 files per request\n\nReturns structured data for each resume including:\n- Contact information\n- Professional summary\n- Work experience\n- Education\n- Skills\n- Certifications\n\nEach file is processed independently - if one fails, others will still be processed.",
+        "operationId": "parse_batch_parse_batch_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "include_raw_text",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include raw text in response",
+              "default": false,
+              "title": "Include Raw Text"
+            },
+            "description": "Include raw text in response"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_batch_parse_batch_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchParseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tokens/create": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Create Token",
+        "description": "Create a new access token for a client\n\nRequires admin authentication.",
+        "operationId": "create_token_admin_tokens_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/admin/tokens": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List Tokens",
+        "description": "List all access tokens\n\nRequires admin authentication.",
+        "operationId": "list_tokens_admin_tokens_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "List only active tokens",
+              "default": false,
+              "title": "Active Only"
+            },
+            "description": "List only active tokens"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tokens/{token}": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get Token Info",
+        "description": "Get information about a specific token\n\nRequires admin authentication.",
+        "operationId": "get_token_info_admin_tokens__token__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Delete Token",
+        "description": "Permanently delete an access token\n\nRequires admin authentication.",
+        "operationId": "delete_token_admin_tokens__token__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tokens/revoke": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Revoke Token",
+        "description": "Revoke (deactivate) an access token\n\nRequires admin authentication.",
+        "operationId": "revoke_token_admin_tokens_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenOperationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Base64FileRequest": {
+        "properties": {
+          "file_content": {
+            "type": "string",
+            "title": "File Content",
+            "description": "Base64 encoded file content"
+          },
+          "file_name": {
+            "type": "string",
+            "title": "File Name",
+            "description": "Original filename"
+          },
+          "include_raw_text": {
+            "type": "boolean",
+            "title": "Include Raw Text",
+            "description": "Include raw text in response",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_content",
+          "file_name"
+        ],
+        "title": "Base64FileRequest",
+        "description": "Request model for base64 encoded files"
+      },
+      "BatchParseItem": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "processing_time_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Time Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "success"
+        ],
+        "title": "BatchParseItem",
+        "description": "Individual result in batch parse response"
+      },
+      "BatchParseResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "total_files": {
+            "type": "integer",
+            "title": "Total Files"
+          },
+          "successful": {
+            "type": "integer",
+            "title": "Successful"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "total_processing_time_ms": {
+            "type": "number",
+            "title": "Total Processing Time Ms"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BatchParseItem"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "total_files",
+          "successful",
+          "failed",
+          "total_processing_time_ms",
+          "results"
+        ],
+        "title": "BatchParseResponse",
+        "description": "Response model for batch parsed resumes"
+      },
+      "Body_parse_batch_parse_batch_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Resume files (PDF or DOCX). Maximum 10 files."
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_parse_batch_parse_batch_post"
+      },
+      "Body_parse_upload_parse_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Resume file (PDF or DOCX)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_parse_upload_parse_upload_post"
+      },
+      "Body_parse_url_parse_url_post": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "URL to resume file"
+          },
+          "include_raw_text": {
+            "type": "boolean",
+            "title": "Include Raw Text",
+            "description": "Include raw text in response",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "Body_parse_url_parse_url_post"
+      },
+      "CreateTokenRequest": {
+        "properties": {
+          "client_name": {
+            "type": "string",
+            "title": "Client Name",
+            "description": "Client name/identifier"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At",
+            "description": "Expiry date (YYYY-MM-DD or full ISO datetime). Omit for no expiration."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "Additional metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_name"
+        ],
+        "title": "CreateTokenRequest",
+        "description": "Request model for creating a token"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "timestamp"
+        ],
+        "title": "HealthResponse",
+        "description": "Health check response"
+      },
+      "ParseResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "processing_time_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Time Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "title": "ParseResponse",
+        "description": "Response model for parsed resume"
+      },
+      "RevokeTokenRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "Token to revoke"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "RevokeTokenRequest",
+        "description": "Request model for revoking a token"
+      },
+      "S3FileRequest": {
+        "properties": {
+          "s3_bucket": {
+            "type": "string",
+            "title": "S3 Bucket",
+            "description": "S3 bucket name"
+          },
+          "s3_key": {
+            "type": "string",
+            "title": "S3 Key",
+            "description": "S3 object key"
+          },
+          "include_raw_text": {
+            "type": "boolean",
+            "title": "Include Raw Text",
+            "description": "Include raw text in response",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "s3_bucket",
+          "s3_key"
+        ],
+        "title": "S3FileRequest",
+        "description": "Request model for S3 file references"
+      },
+      "TokenListResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active"
+          },
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/TokenResponse"
+            },
+            "type": "array",
+            "title": "Tokens"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "active",
+          "tokens"
+        ],
+        "title": "TokenListResponse",
+        "description": "Response model for listing tokens"
+      },
+      "TokenOperationResponse": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "title": "TokenOperationResponse",
+        "description": "Response model for token operations"
+      },
+      "TokenResponse": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "client_name": {
+            "type": "string",
+            "title": "Client Name"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "client_name",
+          "created_at",
+          "expires_at",
+          "is_active",
+          "metadata"
+        ],
+        "title": "TokenResponse",
+        "description": "Response model for token information"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  }
+}
