@@ -585,17 +585,6 @@
             "type": "boolean",
             "title": "Success"
           },
-          "data": {
-            "anyOf": [
-              {
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data"
-          },
           "error": {
             "anyOf": [
               {
@@ -619,13 +608,14 @@
             "title": "Processing Time Ms"
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "filename",
           "success"
         ],
         "title": "BatchParseItem",
-        "description": "Individual result in batch parse response"
+        "description": "Individual result in batch parse response. Resume fields are at top level per item."
       },
       "BatchParseResponse": {
         "properties": {
@@ -804,17 +794,6 @@
             "type": "boolean",
             "title": "Success"
           },
-          "data": {
-            "anyOf": [
-              {
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data"
-          },
           "error": {
             "anyOf": [
               {
@@ -838,12 +817,13 @@
             "title": "Processing Time Ms"
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success"
         ],
         "title": "ParseResponse",
-        "description": "Response model for parsed resume"
+        "description": "Response model for parsed resume. Resume fields (contact, experience, education, skills, etc.) are at top level alongside success and processing_time_ms."
       },
       "RevokeTokenRequest": {
         "properties": {

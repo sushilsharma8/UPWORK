@@ -58,11 +58,14 @@ LINKEDIN_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Apostrophe-like chars (ASCII + Unicode curly/smart quotes from Word/DOCX)
+APOS = r"[\'\u2018\u2019]"
+
 # Enhanced date patterns
 DATE_PATTERNS = [
-    r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\'\']?\s*\d{4}',  # Jan 2020, Oct'2020, June'2020 (with space)
+    r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*' + APOS + r'?\s*\d{4}',  # Jan 2020, Oct'2020 (with space)
     r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\d{4}',  # Jan2020, July2022 (no space)
-    r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\'\']?\s*\d{2}(?!\d)',  # May22, JAN 22 (2-digit year, no space or with space)
+    r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*' + APOS + r'?\s*\d{2}(?!\d)',  # Jan'22, May'16 (2-digit year, Word curly apostrophe)
     r'(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}',  # Full month names
     r'\d{1,2}[/-]\d{4}',  # 05/2022, 08-2021 (month/year format)
     r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}',  # 01/15/2020, 12-31-2020
@@ -72,7 +75,7 @@ DATE_PATTERNS = [
 ]
 
 DATE_RANGE_REGEX = re.compile(
-    r'(?i)(?:' + '|'.join(DATE_PATTERNS) + r')\s*(?:-|\u2013|\u2014|\s*to\s*|\s*until\s*)\s*(?:' + '|'.join(DATE_PATTERNS) + r'|present|current|now|till\s+date|till\s+now|tilldate|tillnow)',
+    r'(?i)(?:' + '|'.join(DATE_PATTERNS) + r')\s*(?:-|\u2013|\u2014|\s*to\s*|\s*until\s*|\s*till\s*)\s*(?:' + '|'.join(DATE_PATTERNS) + r'|present|current|now|till\s+date|till\s+now|tilldate|tillnow)',
     re.IGNORECASE
 )
 
@@ -86,6 +89,7 @@ SECTION_KEYWORDS = {
         "professional profile", "executive summary", "objective", "career objective"
     ],
     "experience": [
+        "projects/technologies experience", "technologies experience", "projects experience",
         "experience", "professional experience", "work experience",
         "employment history", "career history", "work history", "employment",
         "professional background", "work background"
@@ -111,6 +115,14 @@ SECTION_KEYWORDS = {
         "awards", "honors", "achievements", "recognition", "accomplishments"
     ]
 }
+
+# Lines that often appear as *subheadings* inside experience (e.g. "Technologies - Python, Django").
+# Do not treat these as section headers, or experience section gets truncated and later jobs are lost.
+EXPERIENCE_SUBSECTION_HEADERS = frozenset([
+    "technologies", "tools", "environment", "key technologies", "technical environment",
+    "operating systems", "development practices", "key skills", "technologies used",
+    "core technologies", "tech stack", "methodologies"
+])
 
 # Common job titles and skills (set for O(1) lookups)
 JOB_TITLE_KEYWORDS = {
@@ -165,13 +177,10 @@ class JobExperience:
     end_date: Optional[str] = None
     duration: Optional[str] = None
     responsibilities: List[str] = None
-    achievements: List[str] = None
 
     def __post_init__(self):
         if self.responsibilities is None:
             self.responsibilities = []
-        if self.achievements is None:
-            self.achievements = []
 
 @dataclass
 class Education:
@@ -1124,11 +1133,14 @@ class ResumeParser:
         current_section = "header"
         sections[current_section] = []
         
-        # Create keyword mapping
+        # Create keyword mapping; check longer phrases first so e.g. "projects/technologies experience"
+        # is matched as experience, not projects.
         keyword_to_section = {}
         for section, keywords in SECTION_KEYWORDS.items():
             for keyword in keywords:
                 keyword_to_section[keyword.lower()] = section
+        # Sort by keyword length descending so "projects/technologies experience" wins over "projects"
+        keywords_sorted = sorted(keyword_to_section.keys(), key=len, reverse=True)
         
         # Build a sliding window to detect split headers (e.g., "W\nORK\nH\nISTORY")
         for i, line in enumerate(lines):
@@ -1139,8 +1151,9 @@ class ResumeParser:
             normalized = line_stripped.lower()
             matched_section = None
             
-            # Check for section headers in current line
-            for keyword, section_name in keyword_to_section.items():
+            # Check for section headers in current line (longest match first)
+            for keyword in keywords_sorted:
+                section_name = keyword_to_section[keyword]
                 if (re.search(r'\b' + re.escape(keyword) + r'\b', normalized) and 
                     len(line_stripped) < 50 and 
                     not any(char.isdigit() for char in line_stripped[:10])):
@@ -1150,10 +1163,24 @@ class ResumeParser:
             # If no match, check combined with next few lines (for split headers)
             if not matched_section and i < len(lines) - 3:
                 combined = " ".join([l.strip() for l in lines[i:i+4] if l.strip()]).lower()
-                for keyword, section_name in keyword_to_section.items():
+                for keyword in keywords_sorted:
+                    section_name = keyword_to_section[keyword]
                     if re.search(r'\b' + re.escape(keyword) + r'\b', combined):
                         matched_section = section_name
                         break
+            
+            # Don't switch to skills (or away from experience) when the line is a common
+            # *subsection* header inside experience (e.g. "Technologies", "Tools", "Environment").
+            # Otherwise the experience section is truncated and later jobs are lost.
+            if matched_section and current_section == "experience":
+                line_lower = normalized.strip()
+                # Check if line is exactly or almost exactly a subsection header (with optional colon/dash)
+                line_core = re.sub(r'[:\-\s]+$', '', line_lower).strip()
+                if line_core in EXPERIENCE_SUBSECTION_HEADERS or any(
+                    line_core == h or line_core.startswith(h + " ") or line_core.startswith(h + ":") or line_core.startswith(h + "-")
+                    for h in EXPERIENCE_SUBSECTION_HEADERS
+                ):
+                    matched_section = None
             
             if matched_section:
                 current_section = matched_section
@@ -1473,9 +1500,37 @@ class ResumeParser:
                                 current_job.end_date = term.title() if term not in ['till date', 'till now'] else term.title()
                                 break
                 
-                # Strategy 1: Extract title/company from the same line as date
+                # Pipe-separated table format: "Project Name | Client Name | Duration | Domain | Role" or "Project | Client | Duration | Role"
+                if ' | ' in line_stripped:
+                    parts = [p.strip() for p in line_stripped.split('|')]
+                    # Find the segment that contains the date range we matched
+                    date_seg_idx = None
+                    for idx, seg in enumerate(parts):
+                        if date_match.group(0) in seg or (current_job.start_date and current_job.start_date in seg):
+                            date_seg_idx = idx
+                            break
+                    # Expected: 5 columns = Project | Client | Duration | Domain | Role
+                    if date_seg_idx is not None and len(parts) >= 5 and date_seg_idx == 2:
+                        current_job.title = parts[4].strip() if len(parts) > 4 else current_job.title  # Role
+                        client = parts[1].strip() if len(parts) > 1 else ''
+                        project = parts[0].strip() if len(parts) > 0 else ''
+                        current_job.company = client if client and len(client) < 80 else (project if project and len(project) < 80 else current_job.company)
+                    # 4 columns = Project | Client | Duration | Role
+                    elif date_seg_idx is not None and len(parts) == 4 and date_seg_idx == 2:
+                        current_job.title = parts[3].strip() if len(parts) > 3 else current_job.title
+                        client = parts[1].strip() if len(parts) > 1 else ''
+                        project = parts[0].strip() if len(parts) > 0 else ''
+                        current_job.company = client if client and len(client) < 80 else (project if project and len(project) < 80 else current_job.company)
+                    elif date_seg_idx is not None and len(parts) >= 3:
+                        # 3+ columns, duration at some index - use last as role, second as company
+                        current_job.title = parts[-1].strip() if parts and not current_job.title else current_job.title
+                        if len(parts) >= 2 and not current_job.company:
+                            current_job.company = parts[1].strip() if len(parts[1].strip()) < 80 else parts[0].strip()
+                
+                # Strategy 1: Extract title/company from the same line as date (skip if we already set from pipe format)
                 date_start_pos = date_match.start()
-                if date_start_pos > 0:
+                parsed_pipe = current_job.title and current_job.company and ' | ' in line_stripped
+                if date_start_pos > 0 and not parsed_pipe:
                     # Extract text before the date
                     before_date = line_stripped[:date_start_pos].strip()
                     # Remove trailing comma if present
@@ -1677,6 +1732,14 @@ class ResumeParser:
                             current_job.location = loc_line
                             break
             
+            elif re.match(r'^(?:Roles?\s+and\s+Responsibilities|Technical\s+Skills|Professional\s+(?:Summary|Experience)|Education|Skills|Certifications|Projects?|Trainings?\s+&?\s*Certifications?)[\s:]', line_stripped, re.IGNORECASE):
+                # Section header: finalize current job so we don't attach following content to last experience entry
+                if current_job.title or current_job.company:
+                    current_job.responsibilities = current_responsibilities
+                    _finalize_job(current_job)
+                    jobs.append(current_job)
+                current_job = JobExperience()
+                current_responsibilities = []
             elif current_job.title or current_job.company:
                 # This is likely a responsibility or achievement
                 current_responsibilities.append(line_stripped)
@@ -1748,13 +1811,25 @@ class ResumeParser:
             if re.match(r'^(?:\(cid:\d+\)\s*)?(?:Worked|Developed|Created|Implemented|Designed|Managed|Responsible|Involved|Experience|Skills|Tools|Environment)', line_stripped, re.IGNORECASE):
                 continue
             
-            # Look for degree patterns (including plural and possessive forms)
+            # Skip lines that are clearly certifications (avoid "GCP Professional Data Engineer certified" as education)
+            if re.search(r'\b(?:certified|certification|certificate)\b', line_stripped, re.IGNORECASE):
+                continue
+            # Skip technical/skills lines misclassified as education (e.g. "Operating System\tWindows, Linux")
+            if re.search(r'^(?:Operating\s+System|RDBMS|Languages|Web\s+Technologies|Development\s+Tools)[\s:\t]', line_stripped, re.IGNORECASE):
+                continue
+            
+            # Look for degree patterns (including plural and possessive; allow Unicode apostrophe in Master's/Bachelor's)
             degree_patterns = [
-                r'\b(?:Bachelor|Bachelor\'?s|Master|Master\'?s|Masters|PhD|Ph\.?D\.?|Doctorate|Associate|Certificate|Diploma)\b',
+                r'\b(?:Bachelor|Bachelor[\'\u2019]?s|Master|Master[\'\u2019]?s|Masters|PhD|Ph\.?D\.?|Doctorate|Associate|Certificate|Diploma)\b',
                 r'\b(?:B\.?S\.?|M\.?S\.?|B\.?A\.?|M\.?A\.?|Ph\.?D\.?)\b'
             ]
             
             if any(re.search(pattern, line_stripped, re.IGNORECASE) for pattern in degree_patterns):
+                # Don't treat "Associate" in certification phrases as degree (e.g. "Solutions Architect – Associate")
+                if re.search(r'\bAssociate\b', line_stripped, re.IGNORECASE):
+                    if re.search(r'(?:certified|certification|certificate).*\bAssociate\b|(?:architect|engineer)\s*[–\-]\s*Associate\b', line_stripped, re.IGNORECASE):
+                        continue
+                
                 education = Education()
                 
                 # Extract degree
@@ -2128,6 +2203,13 @@ class ResumeParser:
             experience = self.extract_experience(text)
         else:
             experience = self.extract_experience(experience_section)
+            # If section had no/few jobs but full text has date ranges, section may be wrong or truncated
+            # (e.g. jobs under "Projects/Technologies Experience" went to projects). Use full text.
+            date_range_count = len(DATE_RANGE_REGEX.findall(text))
+            if date_range_count > len(experience) and date_range_count >= 1:
+                experience_full = self.extract_experience(text)
+                if len(experience_full) > len(experience):
+                    experience = experience_full
         # Use education section if found, otherwise search entire text
         education_section = sections.get("education", "")
         if not education_section or len(education_section.strip()) < 20:
@@ -2187,6 +2269,15 @@ class ResumeParser:
     def to_dict(self, parsed_resume: ParsedResume) -> Dict[str, Any]:
         """Convert ParsedResume to dictionary for JSON serialization."""
         result = asdict(parsed_resume)
+        
+        # Add experience count above the experience section
+        experience_list = result.get("experience") or []
+        result["experience_count"] = len(experience_list)
+        keys = list(result.keys())
+        keys.remove("experience_count")
+        idx = keys.index("experience") if "experience" in keys else len(keys)
+        keys.insert(idx, "experience_count")
+        result = {k: result[k] for k in keys}
         
         # Remove None values from contact (location, linkedin, github)
         if result.get("contact"):

@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Secur
 from fastapi.security import APIKeyHeader
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import uvicorn
 
 from resume_parser_improved import ResumeParser
@@ -87,17 +87,17 @@ class HealthResponse(BaseModel):
     timestamp: str
 
 class ParseResponse(BaseModel):
-    """Response model for parsed resume"""
-    success: bool
-    data: Optional[Dict[str, Any]] = None
+    """Response model for parsed resume. Resume fields (contact, experience, etc.) are at top level."""
+    model_config = ConfigDict(extra="allow")
+    success: bool = True
     error: Optional[str] = None
     processing_time_ms: Optional[float] = None
 
 class BatchParseItem(BaseModel):
-    """Individual result in batch parse response"""
+    """Individual result in batch parse response. Resume fields are at top level per item."""
+    model_config = ConfigDict(extra="allow")
     filename: str
     success: bool
-    data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     processing_time_ms: Optional[float] = None
 
@@ -198,15 +198,15 @@ async def parse_upload(
             
             return {
                 "success": True,
-                "data": resume_dict,
+                **resume_dict,
                 "processing_time_ms": processing_time
             }
-        
+
         finally:
             # Clean up temporary file
             if os.path.exists(tmp_file_path):
                 os.unlink(tmp_file_path)
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -271,10 +271,10 @@ async def parse_base64(
             
             return {
                 "success": True,
-                "data": resume_dict,
+                **resume_dict,
                 "processing_time_ms": processing_time
             }
-        
+
         finally:
             # Clean up temporary file
             if os.path.exists(tmp_file_path):
@@ -344,10 +344,10 @@ async def parse_s3(
             
             return {
                 "success": True,
-                "data": resume_dict,
+                **resume_dict,
                 "processing_time_ms": processing_time
             }
-        
+
         finally:
             # Clean up temporary file
             if os.path.exists(tmp_file_path):
@@ -424,10 +424,10 @@ async def parse_url(
             
             return {
                 "success": True,
-                "data": resume_dict,
+                **resume_dict,
                 "processing_time_ms": processing_time
             }
-        
+
         finally:
             # Clean up temporary file
             if os.path.exists(tmp_file_path):
@@ -529,8 +529,8 @@ async def parse_batch(
             results.append(BatchParseItem(
                 filename=file.filename,
                 success=True,
-                data=resume_dict,
-                processing_time_ms=processing_time
+                processing_time_ms=processing_time,
+                **resume_dict
             ))
             successful_count += 1
         
