@@ -52,30 +52,30 @@ For production, you may want to store tokens in S3 or DynamoDB. You can set the 
 
 ## 3. Create Access Tokens for Your Clients
 
-Use the `create_token.py` script to generate access tokens for your clients.
+Use the `scripts/create_token.py` script to generate access tokens for your clients (run from project root).
 
 ### Installation & Setup
 
-Make sure you have the token management files in your project:
+Make sure you have the token management files in your project (run commands from the project root):
 - `token_manager.py`
 - `token_storage.py`
-- `create_token.py`
+- `scripts/create_token.py`
 
 ### Creating Tokens
 
 #### Basic Token (No Expiration)
 ```bash
-python create_token.py --client "TCS"
+python scripts/create_token.py --client "TCS"
 ```
 
 #### Token with Expiration (365 days)
 ```bash
-python create_token.py --client "Salesforce" --expires-days 365
+python scripts/create_token.py --client "Salesforce" --expires-days 365
 ```
 
 #### Token with Metadata
 ```bash
-python create_token.py --client "Acme Corp" \
+python scripts/create_token.py --client "Acme Corp" \
   --expires-days 180 \
   --metadata '{"contact_email":"john@acme.com","contact_name":"John Doe"}'
 ```
@@ -86,22 +86,22 @@ python create_token.py --client "Acme Corp" \
 
 #### List All Tokens
 ```bash
-python create_token.py --list
+python scripts/create_token.py --list
 ```
 
 #### List Only Active Tokens
 ```bash
-python create_token.py --list --active-only
+python scripts/create_token.py --list --active-only
 ```
 
 #### Revoke a Token (Deactivate)
 ```bash
-python create_token.py --revoke <token_string>
+python scripts/create_token.py --revoke <token_string>
 ```
 
 #### Delete a Token (Permanent)
 ```bash
-python create_token.py --delete <token_string>
+python scripts/create_token.py --delete <token_string>
 ```
 
 ### Token File Structure
@@ -291,7 +291,7 @@ Replace `YOUR_API_GATEWAY_ENDPOINT` with your actual API Gateway invoke URL and 
 ## 7. Troubleshooting
 
 ### Token Not Working
-- Verify the token exists: `python create_token.py --list`
+- Verify the token exists: `python scripts/create_token.py --list`
 - Check if the token is active (not revoked)
 - Verify the token hasn't expired
 - Ensure the token is being sent in the `X-API-Key` header

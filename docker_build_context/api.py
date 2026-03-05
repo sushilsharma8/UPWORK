@@ -9,8 +9,12 @@ import io
 import base64
 import tempfile
 import logging
+import html as html_module
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+
+# When raw data (HTML format) exceeds this length, split into raw_data_1, raw_data_2, ...
+RAW_DATA_MAX_CHARS = 130_000
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Security, Depends
 from fastapi.security import APIKeyHeader
@@ -110,6 +114,48 @@ class BatchParseResponse(BaseModel):
     total_processing_time_ms: float
     results: List[BatchParseItem]
 
+
+def _raw_text_to_html(raw_text: str) -> str:
+    """Wrap raw extracted text as a minimal HTML document for 'Raw data' response."""
+    escaped = html_module.escape(raw_text or "")
+    return (
+        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
+        "<title>Resume raw text</title></head><body><pre>"
+        f"{escaped}</pre></body></html>"
+    )
+
+
+def apply_raw_data_response(resume_dict: Dict[str, Any], include_raw_text: bool) -> None:
+    """
+    Apply raw data handling to resume_dict in place.
+    - If include_raw_text is False: set raw_text_length, remove raw_text.
+    - If include_raw_text is True and content <= RAW_DATA_MAX_CHARS: send as single 'raw_text' (HTML format).
+    - If include_raw_text is True and content > RAW_DATA_MAX_CHARS: split into raw_data_1, raw_data_2, ... (HTML chunks).
+    """
+    raw_text_value = resume_dict.get("raw_text") or ""
+    resume_dict["raw_text_length"] = len(raw_text_value)
+
+    if not include_raw_text:
+        resume_dict.pop("raw_text", None)
+        return
+
+    html_content = _raw_text_to_html(raw_text_value)
+
+    if len(html_content) <= RAW_DATA_MAX_CHARS:
+        resume_dict["raw_text"] = html_content
+        return
+
+    # Split HTML content into chunks of at most RAW_DATA_MAX_CHARS
+    chunks = []
+    for i in range(0, len(html_content), RAW_DATA_MAX_CHARS):
+        chunks.append(html_content[i : i + RAW_DATA_MAX_CHARS])
+
+    resume_dict.pop("raw_text", None)
+    resume_dict["raw_data_count"] = len(chunks)
+    for idx, chunk in enumerate(chunks, start=1):
+        resume_dict[f"raw_data_{idx}"] = chunk
+
+
 @app.get("/", tags=["General"])
 async def root():
     """Root endpoint with API information"""
@@ -185,15 +231,10 @@ async def parse_upload(
             # Parse resume
             parsed_resume = parser.parse_resume(tmp_file_path)
             resume_dict = parser.to_dict(parsed_resume)
-            
-            # Optionally remove raw text
-            if not include_raw_text and "raw_text" in resume_dict:
-                raw_text_value = resume_dict.get("raw_text") or ""
-                resume_dict["raw_text_length"] = len(raw_text_value)
-                del resume_dict["raw_text"]
-            
+            apply_raw_data_response(resume_dict, include_raw_text)
+
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
-            
+
             logger.info(f"Successfully parsed {file.filename} in {processing_time:.2f}ms")
             
             return {
@@ -258,15 +299,10 @@ async def parse_base64(
             # Parse resume
             parsed_resume = parser.parse_resume(tmp_file_path)
             resume_dict = parser.to_dict(parsed_resume)
-            
-            # Optionally remove raw text
-            if not request.include_raw_text and "raw_text" in resume_dict:
-                raw_text_value = resume_dict.get("raw_text") or ""
-                resume_dict["raw_text_length"] = len(raw_text_value)
-                del resume_dict["raw_text"]
-            
+            apply_raw_data_response(resume_dict, request.include_raw_text)
+
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
-            
+
             logger.info(f"Successfully parsed base64 file in {processing_time:.2f}ms")
             
             return {
@@ -331,15 +367,10 @@ async def parse_s3(
             # Parse resume
             parsed_resume = parser.parse_resume(tmp_file_path)
             resume_dict = parser.to_dict(parsed_resume)
-            
-            # Optionally remove raw text
-            if not request.include_raw_text and "raw_text" in resume_dict:
-                raw_text_value = resume_dict.get("raw_text") or ""
-                resume_dict["raw_text_length"] = len(raw_text_value)
-                del resume_dict["raw_text"]
-            
+            apply_raw_data_response(resume_dict, request.include_raw_text)
+
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
-            
+
             logger.info(f"Successfully parsed S3 file in {processing_time:.2f}ms")
             
             return {
@@ -411,15 +442,10 @@ async def parse_url(
             # Parse resume
             parsed_resume = parser.parse_resume(tmp_file_path)
             resume_dict = parser.to_dict(parsed_resume)
-            
-            # Optionally remove raw text
-            if not include_raw_text and "raw_text" in resume_dict:
-                raw_text_value = resume_dict.get("raw_text") or ""
-                resume_dict["raw_text_length"] = len(raw_text_value)
-                del resume_dict["raw_text"]
-            
+            apply_raw_data_response(resume_dict, include_raw_text)
+
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
-            
+
             logger.info(f"Successfully parsed URL file in {processing_time:.2f}ms")
             
             return {
@@ -516,14 +542,10 @@ async def parse_batch(
             parsed_resume = parser.parse_resume(temp_file_path)
             resume_dict = parser.to_dict(parsed_resume)
             
-            # Optionally remove raw text
-            if not include_raw_text and "raw_text" in resume_dict:
-                raw_text_value = resume_dict.get("raw_text") or ""
-                resume_dict["raw_text_length"] = len(raw_text_value)
-                del resume_dict["raw_text"]
-            
+            apply_raw_data_response(resume_dict, include_raw_text)
+
             processing_time = (datetime.now() - file_start_time).total_seconds() * 1000
-            
+
             logger.info(f"Successfully parsed {file.filename} in {processing_time:.2f}ms")
             
             results.append(BatchParseItem(

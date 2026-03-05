@@ -2,26 +2,38 @@
 """
 Enhanced Resume Parser
 A comprehensive resume parsing solution with improved accuracy and API capabilities.
+
+File structure (all in one file):
+  1. Imports & setup (logging, spaCy)
+  2. Constants — regexes, section keywords, job/skill/employment/department keywords
+  3. Data models — ContactInfo, JobExperience, Education, ParsedResume
+  4. LocationValidator — location validation (US states, countries)
+  5. ResumeParser — text extraction, contact, sections, skills, experience, education,
+     projects, confidence, parse_resume(), to_dict()
 """
 
+# Standard library
 import os
 import re
 import logging
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-import spacy
-import pdfplumber
+# Third-party
 import docx
-from docx.oxml.text.paragraph import CT_P
+import pdfplumber
+import spacy
 from docx.oxml.table import CT_Tbl
+from docx.oxml.text.paragraph import CT_P
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph as DocxParagraph
 import nltk
 from nltk.corpus import stopwords
 
-# Configure logging
+# -----------------------------------------------------------------------------
+# Logging & NLP setup
+# -----------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -41,7 +53,9 @@ except OSError:
 except Exception as e:
     logger.warning(f"Failed to load spaCy model: {e}. Parser will use pattern-based extraction only.")
 
-# Enhanced regex patterns
+# =============================================================================
+# CONSTANTS — Contact & URL patterns
+# =============================================================================
 PHONE_REGEX = re.compile(
     r'(?:\+?1[-.\s]?)?(?:\(?([0-9]{3})\)?[-.\s]?)?([0-9]{3})[-.\s]?([0-9]{4})'
     r'|(?:\+?[1-9]\d{0,3}[-.\s]?)?(?:\(?([0-9]{2,4})\)?[-.\s]?)?([0-9]{2,4})[-.\s]?([0-9]{2,4})[-.\s]?([0-9]{2,4})'
@@ -58,6 +72,27 @@ LINKEDIN_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# GitHub profile URLs
+GITHUB_REGEX = re.compile(
+    r'(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9_-]+/?',
+    re.IGNORECASE
+)
+
+# Facebook profile/page URLs
+FACEBOOK_REGEX = re.compile(
+    r'(?:https?://)?(?:www\.)?(?:fb\.me|facebook\.com|fb\.com)/[^\s,;)+]+',
+    re.IGNORECASE
+)
+
+# WhatsApp: wa.me links or "WhatsApp" / "WhatsApp:" followed by phone
+WHATSAPP_REGEX = re.compile(
+    r'(?:https?://)?(?:wa\.me|api\.whatsapp\.com/send\?phone=)/?(\d{7,15})',
+    re.IGNORECASE
+)
+
+# -----------------------------------------------------------------------------
+# Date patterns (used for experience/education date ranges)
+# -----------------------------------------------------------------------------
 # Apostrophe-like chars (ASCII + Unicode curly/smart quotes from Word/DOCX)
 APOS = r"[\'\u2018\u2019]"
 
@@ -79,7 +114,9 @@ DATE_RANGE_REGEX = re.compile(
     re.IGNORECASE
 )
 
-# Enhanced section keywords
+# -----------------------------------------------------------------------------
+# Section detection keywords
+# -----------------------------------------------------------------------------
 SECTION_KEYWORDS = {
     "contact": [
         "contact", "contact information", "personal information", "personal details"
@@ -110,21 +147,19 @@ SECTION_KEYWORDS = {
     "projects": [
         "projects", "key projects", "notable projects", "project experience",
         "recent projects", "personal projects", "academic projects", "project details"
-    ],
-    "awards": [
-        "awards", "honors", "achievements", "recognition", "accomplishments"
     ]
 }
 
-# Lines that often appear as *subheadings* inside experience (e.g. "Technologies - Python, Django").
-# Do not treat these as section headers, or experience section gets truncated and later jobs are lost.
+# Subheadings inside experience (e.g. "Technologies", "Tools") — do not treat as section headers.
 EXPERIENCE_SUBSECTION_HEADERS = frozenset([
     "technologies", "tools", "environment", "key technologies", "technical environment",
     "operating systems", "development practices", "key skills", "technologies used",
-    "core technologies", "tech stack", "methodologies"
+    "core technologies", "tech stack",     "methodologies"
 ])
 
-# Common job titles and skills (set for O(1) lookups)
+# -----------------------------------------------------------------------------
+# Job title & technical skills keywords (O(1) lookups)
+# -----------------------------------------------------------------------------
 JOB_TITLE_KEYWORDS = {
     "engineer", "developer", "manager", "consultant", "analyst", "specialist",
     "architect", "lead", "officer", "director", "scientist", "designer",
@@ -159,6 +194,9 @@ TECH_SKILLS = {
     "api", "rest", "soap", "graphql", "json", "xml", "yaml", "html", "css", "nginx", "apache", "tomcat", "iis"
 }
 
+# =============================================================================
+# DATA MODELS
+# =============================================================================
 @dataclass
 class ContactInfo:
     name: Optional[str] = None
@@ -167,7 +205,33 @@ class ContactInfo:
     location: Optional[str] = None
     linkedin: Optional[str] = None
     github: Optional[str] = None
+    whatsapp: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    facebook: Optional[str] = None
+    gender: Optional[str] = None
 
+
+# Employment type keywords (order matters for matching; first match wins)
+EMPLOYMENT_TYPE_PATTERNS = [
+    ("Full-time", re.compile(r"\bfull[- ]?time\b", re.IGNORECASE)),
+    ("Part-time", re.compile(r"\bpart[- ]?time\b", re.IGNORECASE)),
+    ("Contract", re.compile(r"\bcontract(or)?\b", re.IGNORECASE)),
+    ("Internship", re.compile(r"\bintern(ship)?\b", re.IGNORECASE)),
+    ("Freelance", re.compile(r"\bfreelance\b", re.IGNORECASE)),
+    ("Remote", re.compile(r"\bremote\b", re.IGNORECASE)),
+    ("Hybrid", re.compile(r"\bhybrid\b", re.IGNORECASE)),
+    ("Volunteer", re.compile(r"\bvolunteer\b", re.IGNORECASE)),
+]
+
+# Common department names to detect from context
+DEPARTMENT_KEYWORDS = [
+    "engineering", "sales", "marketing", "product", "operations", "hr", "human resources",
+    "finance", "design", "research", "r&d", "rd", "it", "support", "legal",     "quality",
+]
+
+# -----------------------------------------------------------------------------
+# Experience, Education, ParsedResume
+# -----------------------------------------------------------------------------
 @dataclass
 class JobExperience:
     title: Optional[str] = None
@@ -177,6 +241,8 @@ class JobExperience:
     end_date: Optional[str] = None
     duration: Optional[str] = None
     responsibilities: List[str] = None
+    employment_type: Optional[str] = None  # e.g. Full-time, Part-time, Contract
+    department: Optional[str] = None  # e.g. Engineering, Sales
 
     def __post_init__(self):
         if self.responsibilities is None:
@@ -201,7 +267,6 @@ class ParsedResume:
     skills: List[str] = None
     certifications: List[str] = None
     projects: List[str] = None
-    awards: List[str] = None
     raw_text: Optional[str] = None
     confidence_score: float = 0.0
 
@@ -216,9 +281,11 @@ class ParsedResume:
             self.certifications = []
         if self.projects is None:
             self.projects = []
-        if self.awards is None:
-            self.awards = []
 
+
+# =============================================================================
+# LOCATION VALIDATOR
+# =============================================================================
 class LocationValidator:
     """Location validator using location database for accurate validation."""
     
@@ -355,9 +422,16 @@ class LocationValidator:
         
         return False
 
+
+# =============================================================================
+# RESUME PARSER
+# =============================================================================
 class ResumeParser:
     """Enhanced resume parser with improved accuracy and modularity."""
-    
+
+    # -------------------------------------------------------------------------
+    # Initialization
+    # -------------------------------------------------------------------------
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
         self.nlp = nlp  # Store spaCy model for use in class methods
@@ -411,12 +485,131 @@ class ResumeParser:
                 'having', 'do', 'does', 'did', 'will', 'would', 'could',
                 'should', 'may', 'might', 'must', 'shall'
             }
-    
+
+    # -------------------------------------------------------------------------
+    # Helpers — job title, environment, employment type, department, filters
+    # -------------------------------------------------------------------------
     def _contains_job_title_keyword(self, text: str) -> bool:
         """Check if text contains any job title keyword (optimized with cached set)."""
         text_lower = text.lower()
         return any(keyword in text_lower for keyword in self._job_title_keywords_set)
-        
+
+    def _looks_like_environment_or_tech_stack(self, text: str) -> bool:
+        """Return True if line looks like an Environment/Tools line or comma-separated tech stack, not a company or title."""
+        if not text or len(text.strip()) < 15:
+            return False
+        t = text.strip().lower()
+        if re.match(r"^(?:environment|environments?/tools?|tools?\s*used)[\s:]", t):
+            return True
+        # Comma-separated list of tech terms (JSON, JavaScript, Python, Django, Git, AWS, etc.)
+        tech_terms = (
+            r"\b(?:json|javascript|jquery|angular|python|django|html|css|bootstrap|git|github|aws|"
+            r"mysql|postgres|redis|rabbitmq|jenkins|heroku|azure|linux|restful|api|rest|"
+            r"kafka|swagger|rspec|cucumber|mvc|xml|ajax|react|node\.?js)\b"
+        )
+        parts = [p.strip() for p in re.split(r"[,;]", t) if p.strip()]
+        if len(parts) >= 3:
+            matches = sum(1 for p in parts if re.search(tech_terms, p, re.IGNORECASE))
+            if matches >= 2:
+                return True
+        return False
+
+    def _extract_employment_type(self, text: str) -> Optional[str]:
+        """Extract employment type (Full-time, Part-time, Contract, etc.) from text. Returns first match or None."""
+        if not text or not text.strip():
+            return None
+        for label, pattern in EMPLOYMENT_TYPE_PATTERNS:
+            if pattern.search(text):
+                return label
+        return None
+
+    def _extract_department(self, text: str) -> Optional[str]:
+        """Extract department (Engineering, Sales, etc.) from text. Looks for 'Department: X', 'X Department', or known department keywords."""
+        if not text or not text.strip():
+            return None
+        text_lower = text.lower()
+        # "Department: Engineering" or "Dept.: Engineering"
+        dept_match = re.search(r"department\s*[.:]\s*([a-z][a-z\s&]+?)(?:\s*[,\n]|$)", text_lower, re.IGNORECASE)
+        if dept_match:
+            return dept_match.group(1).strip().title()
+        # "Engineering Department"
+        for kw in DEPARTMENT_KEYWORDS:
+            if re.search(rf"\b{re.escape(kw)}\s+department\b", text_lower):
+                return "R&D" if kw in ("r&d", "rd") else kw.title()
+        # Standalone department keyword (word boundary) in short context
+        for kw in DEPARTMENT_KEYWORDS:
+            if re.search(rf"\b{re.escape(kw)}\b", text_lower):
+                if kw in ("r&d", "rd"):
+                    return "R&D"
+                return kw.title()
+        return None
+
+    def _is_date_range_only(self, s: Optional[str]) -> bool:
+        """Return True if s looks like only a date range (e.g. '02/07/2023 to 02/06/2025'), not a job title."""
+        if not s or not s.strip():
+            return False
+        t = s.strip()
+        # Purely numeric date range: MM/DD/YYYY to MM/DD/YYYY or DD/MM/YYYY to DD/MM/YYYY
+        if re.match(r"^\d{1,2}/\d{1,2}/\d{2,4}\s*(?:to|–|-|—)\s*\d{1,2}/\d{1,2}/\d{2,4}\s*$", t, re.IGNORECASE):
+            return True
+        # Month'YYYY – Month YYYY or Feb'2016 – October 2020
+        if re.match(r"^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*['']?\s*\d{2,4}\s*(?:–|-|—|to)\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)?[a-z]*\s*\d{2,4}\s*$", t, re.IGNORECASE):
+            return True
+        return False
+
+    def _is_location_or_context_title(self, s: Optional[str]) -> bool:
+        """Return True if title looks like a location/context line, e.g. '(OPTUM Technology Location: Eden Prairie MN USA (From April 2019 to October 2020))'."""
+        if not s or not s.strip():
+            return False
+        t = s.strip()
+        if not (t.startswith("(") and t.endswith(")")):
+            return False
+        # Parenthetical with "Location:" and "(From ... to ...)"
+        if re.search(r"location\s*:\s*.+\(from\s+.+\s+to\s+.+\)", t, re.IGNORECASE):
+            return True
+        # (Company Name: (From Date to Date)) or (OPTUM Technology India: (From Feb 2006 to April 2019))
+        if re.search(r"\(from\s+.+\s+to\s+.+\)\s*\)\s*$", t, re.IGNORECASE):
+            return True
+        return False
+
+    def _is_certification_or_table_entry(self, job: JobExperience) -> bool:
+        """Return True if this job entry is likely a certification row or table header, not real work experience."""
+        company = (job.company or "").strip().lower()
+        title = (job.title or "").strip().lower()
+        combined = f"{company} {title}"
+        # Certification table header or column names
+        if re.search(r"\b(provided\s+by|coverage)\b", combined) and re.search(r"\bcertification\b", combined):
+            return True
+        if re.search(r"^certification\s+provided\s+by\s+coverage\s*$", company):
+            return True
+        # Certification name as company (e.g. "SnowPro Core Certification Snowflake", "SnowPro Advanced Architect Snowflake")
+        if re.search(r"\bsnowpro\s+(?:core|advanced|architect)\b", combined):
+            return True
+        if re.search(r"\b(?:certified|certification)\s+(?:in|by|provided)\b", combined):
+            return True
+        # Company is just a product/vendor name often used in cert tables (e.g. "Snowflake" with no real title and cert-like context)
+        if company in ("snowflake", "salesforce") and self._is_date_range_only(job.title):
+            return True
+        # Title is only a date range and company looks like cert/table (short or contains Certification)
+        if self._is_date_range_only(job.title):
+            if re.search(r"\bcertification\b", company) or len(company.split()) <= 2:
+                return True
+        # Company is a sentence fragment (e.g. "Client X and Y, Since September 2022.")
+        if re.search(r",\s*since\s+\w+\s+\d{4}\s*\.?\s*$", company):
+            return True
+        # Title is only a certification phrase (e.g. "Administrator Certified.") and company looks like product/vendor
+        if title and len(title.split()) <= 4 and re.search(r"(?:certified|certification)\.?\s*$", title):
+            if re.search(r"\b(salesforce|snowflake|platform\s+system)\b", company):
+                return True
+        # Empty company and title is only a date range or a location/context line (e.g. "(OPTUM Technology Location: ... (From ... to ...))")
+        if not company.strip():
+            if self._is_date_range_only(job.title) or self._is_location_or_context_title(job.title):
+                return True
+        return False
+
+    # -------------------------------------------------------------------------
+    # Text extraction (PDF, DOCX, table formatting)
+    # -------------------------------------------------------------------------
     def extract_text_from_pdf(self, path: str) -> str:
         """Extract text from PDF with improved error handling.
         
@@ -480,6 +673,16 @@ class ResumeParser:
                     lines.append(" | ".join(cells))
         
         return "\n".join(lines)
+
+    def _normalize_raw_text(self, text: str) -> str:
+        """Normalize raw extracted text for consistent parsing: Unicode spaces, newlines, BOM."""
+        if not text or not text.strip():
+            return text or ""
+        # Replace non-breaking and other common Unicode spaces with ASCII space
+        text = re.sub(r"[\u00a0\u2000-\u200b\u202f\u205f\ufeff]+", " ", text)
+        # Collapse multiple newlines to at most two (preserve paragraph breaks)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def extract_text_from_docx(self, path: str) -> str:
         """Extract text from DOCX with improved error handling.
@@ -567,6 +770,9 @@ class ResumeParser:
             logger.error(f"Error reading DOCX {path}: {e}")
             return ""
 
+    # -------------------------------------------------------------------------
+    # Contact — name, email verification, contact info, location
+    # -------------------------------------------------------------------------
     def extract_name(self, text: str) -> str | None:
         """Extract name from resume text with improved accuracy using pattern-based validation."""
         
@@ -937,6 +1143,65 @@ class ResumeParser:
             if not linkedin_url.lower().startswith(("http://", "https://")):
                 linkedin_url = "https://" + linkedin_url
             contact.linkedin = linkedin_url
+
+        # Extract GitHub profile
+        github_match = GITHUB_REGEX.search(text)
+        if github_match:
+            github_url = github_match.group(0).strip().rstrip('.,);]')
+            if not github_url.lower().startswith(("http://", "https://")):
+                github_url = "https://" + github_url
+            contact.github = github_url
+
+        # Extract Facebook profile
+        facebook_match = FACEBOOK_REGEX.search(text)
+        if facebook_match:
+            facebook_url = facebook_match.group(0).strip().rstrip('.,);]')
+            if not facebook_url.lower().startswith(("http://", "https://")):
+                facebook_url = "https://" + facebook_url
+            contact.facebook = facebook_url
+
+        # Extract WhatsApp: wa.me link or "WhatsApp:" / "WhatsApp" followed by phone on same/short line
+        wa_match = WHATSAPP_REGEX.search(text)
+        if wa_match:
+            contact.whatsapp = wa_match.group(0).strip().rstrip('.,);]')
+        else:
+            # Look for "WhatsApp" or "WhatsApp:" near a phone number (e.g. in first 800 chars)
+            head = text[:800] if len(text) > 800 else text
+            if re.search(r"\bwhatsapp\b", head, re.IGNORECASE):
+                phone_m = PHONE_REGEX.search(head)
+                if phone_m:
+                    digits = "".join(filter(str.isdigit, phone_m.group(0)))
+                    if 7 <= len(digits) <= 15:
+                        contact.whatsapp = digits
+
+        # Extract date of birth (DOB / Date of Birth / Born near a date)
+        dob_patterns = [
+            r"(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born|D\.O\.B\.?)\s*[:\-]?\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})",
+            r"(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born|D\.O\.B\.?)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2})",
+            r"(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born|D\.O\.B\.?)\s*[:\-]?\s*((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s']*\d{1,2},?\s*\d{4})",
+            r"(?:DOB|Date\s+of\s+Birth|Birth\s+Date|Born|D\.O\.B\.?)\s*[:\-]?\s*(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})",
+        ]
+        head_contact = text[:1200] if len(text) > 1200 else text  # DOB usually in header
+        for pat in dob_patterns:
+            m = re.search(pat, head_contact, re.IGNORECASE)
+            if m:
+                contact.date_of_birth = m.group(1).strip()
+                break
+
+        # Extract gender (in contact/header area: "Gender:", "Sex:", or standalone Male/Female)
+        gender_patterns = [
+            r"(?:Gender|Sex)\s*[:\-]?\s*(Male|Female|M|F|Other|Prefer\s+not\s+to\s+say)",
+            r"\b(Male|Female)\b(?=\s*$|\s*\n|\s*[,\|])",
+        ]
+        for pat in gender_patterns:
+            m = re.search(pat, head_contact, re.IGNORECASE)
+            if m:
+                g = m.group(1).strip()
+                if g.upper() in ("M", "F"):
+                    contact.gender = "Male" if g.upper() == "M" else "Female"
+                else:
+                    contact.gender = g.title()
+                break
         
         # Extract name using improved method (header-based)
         contact.name = self.extract_name(text)
@@ -1126,6 +1391,9 @@ class ResumeParser:
         # No valid location found
         return None
 
+    # -------------------------------------------------------------------------
+    # Section detection
+    # -------------------------------------------------------------------------
     def find_sections(self, text: str) -> Dict[str, str]:
         """Find and extract resume sections with improved accuracy."""
         lines = text.split('\n')
@@ -1202,6 +1470,9 @@ class ResumeParser:
         
         return sections
 
+    # -------------------------------------------------------------------------
+    # Skills extraction
+    # -------------------------------------------------------------------------
     def extract_skills(self, text: str, sections: Optional[Dict[str, str]] = None) -> List[str]:
         """Extract technical skills and competencies with comprehensive detection.
 
@@ -1372,6 +1643,9 @@ class ResumeParser:
         # Sort the final list
         return sorted(cleaned_skills)
 
+    # -------------------------------------------------------------------------
+    # Experience extraction
+    # -------------------------------------------------------------------------
     def extract_experience(self, experience_text: str) -> List[JobExperience]:
         """Extract work experience with improved parsing."""
         jobs = []
@@ -1463,6 +1737,11 @@ class ResumeParser:
             duration = _format_duration(start_dt, end_dt)
             if duration:
                 job.duration = duration
+            # If employment type not found in header/first line, search full description (responsibilities)
+            if not job.employment_type and job.responsibilities:
+                full_desc = "\n".join(job.responsibilities)
+                job.employment_type = self._extract_employment_type(full_desc)
+            # Don't extract department from full description (reduces false positives like "Design" from "Designing")
         
         for i, line in enumerate(lines):
             line_stripped = line.strip()
@@ -1557,20 +1836,22 @@ class ResumeParser:
                             if company_candidate and len(company_candidate) < 100:
                                 current_job.company = company_candidate
                     # Otherwise, check if it could be a company (but prioritize title extraction from next line)
-                    elif not current_job.company and before_date:
+                    elif not current_job.company and before_date and not self._looks_like_environment_or_tech_stack(before_date):
                         # Pattern: "Company, Location." or "Company, Location" (location is optional)
                         # Remove trailing period and location (City, ST or just ST)
                         company_candidate = before_date.rstrip('.')
-                        # Remove location pattern: ", ST" or ", City, ST"
+                        # Remove location pattern: ", ST" or ", City, ST" or ", Country." (allow optional spaces after comma)
                         company_candidate = re.sub(r',\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2}\s*$', '', company_candidate).strip()
                         company_candidate = re.sub(r',\s*[A-Z]{2}\s*$', '', company_candidate).strip()
+                        company_candidate = re.sub(r',\s*[A-Za-z]{2,20}\.?\s*$', '', company_candidate).strip()  # ", India." or ", Country"
                         
-                        # Only set as company if it doesn't look like a title
-                        if company_candidate and len(company_candidate) < 100:
-                            # Check if it has company indicators OR looks like a proper company name
+                        # Only set as company if it doesn't look like a title or tech stack
+                        if company_candidate and len(company_candidate) < 100 and not self._looks_like_environment_or_tech_stack(company_candidate):
+                            words = company_candidate.split()
+                            # Company: has company indicators, or (proper format and (2+ words or single long word) and not title)
                             if (re.search(r'\b(?:Inc|LLC|Corp|Co|Ltd|Company|Corporation|Bank|Services|Solutions|Technologies|Systems|Financial)\b', company_candidate, re.IGNORECASE) or
-                                (re.match(r'^[A-Z][A-Za-z0-9\s&.,\-]+$', company_candidate) and 
-                                 len(company_candidate.split()) >= 2 and  # Company names usually have 2+ words
+                                (re.match(r'^[A-Z][A-Za-z0-9\s&.,\-]+$', company_candidate) and
+                                 (len(words) >= 2 or (len(words) == 1 and len(company_candidate) >= 12)) and
                                  not self._contains_job_title_keyword(company_candidate))):
                                 current_job.company = company_candidate
                                 
@@ -1583,7 +1864,7 @@ class ResumeParser:
                 # Priority: Title first (common pattern: "Company, Location. Date\nTitle")
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
-                    if next_line and len(next_line) < 100:
+                    if next_line and len(next_line) < 100 and not self._looks_like_environment_or_tech_stack(next_line):
                         # Skip if it's clearly a description or responsibility
                         if not (re.match(r'^(?:Description|Responsibilities?|Environment)[:\-]', next_line, re.IGNORECASE) or
                                 self._compiled_patterns['bullet_point'].match(next_line)):
@@ -1607,7 +1888,7 @@ class ResumeParser:
                 # Priority: Check line immediately before date (most common pattern: "Company, Location\nRole: Title Date")
                 for j in range(max(0, i-3), i):
                     prev_line = lines[j].strip()
-                    if not prev_line:
+                    if not prev_line or self._looks_like_environment_or_tech_stack(prev_line):
                         continue
                     
                     # Skip if it's clearly a responsibility line (starts with bullet or common verbs)
@@ -1680,7 +1961,7 @@ class ResumeParser:
                 if not current_job.title:
                     for k in range(start_idx, min(len(lines), i + 4)):
                         title_line = lines[k].strip()
-                        if not title_line:
+                        if not title_line or self._looks_like_environment_or_tech_stack(title_line):
                             continue
                         
                         # Skip if it's a responsibility line
@@ -1731,6 +2012,16 @@ class ResumeParser:
                         if re.search(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2}\b', loc_line):
                             current_job.location = loc_line
                             break
+
+                # Extract employment type and department from header context (date line + next few lines)
+                header_context = "\n".join(
+                    [line_stripped]
+                    + [lines[j].strip() for j in range(i + 1, min(i + 5, len(lines))) if j < len(lines) and lines[j].strip()]
+                )
+                if not current_job.employment_type:
+                    current_job.employment_type = self._extract_employment_type(header_context)
+                if not current_job.department:
+                    current_job.department = self._extract_department(header_context)
             
             elif re.match(r'^(?:Roles?\s+and\s+Responsibilities|Technical\s+Skills|Professional\s+(?:Summary|Experience)|Education|Skills|Certifications|Projects?|Trainings?\s+&?\s*Certifications?)[\s:]', line_stripped, re.IGNORECASE):
                 # Section header: finalize current job so we don't attach following content to last experience entry
@@ -1742,6 +2033,11 @@ class ResumeParser:
                 current_responsibilities = []
             elif current_job.title or current_job.company:
                 # This is likely a responsibility or achievement
+                if not current_job.employment_type or not current_job.department:
+                    if not current_job.employment_type:
+                        current_job.employment_type = self._extract_employment_type(line_stripped)
+                    if not current_job.department:
+                        current_job.department = self._extract_department(line_stripped)
                 current_responsibilities.append(line_stripped)
         
         # Add the last job
@@ -1780,11 +2076,26 @@ class ResumeParser:
             if job.title:
                 job.title = self._compiled_patterns['role_prefix'].sub('', job.title).strip()
             
+            # Don't keep Environment/tech-stack lines as company or title
+            if job.company and self._looks_like_environment_or_tech_stack(job.company):
+                job.company = ""
+            if job.title and self._looks_like_environment_or_tech_stack(job.title):
+                job.title = ""
+            
             seen_jobs.add(job_key)
             deduplicated_jobs.append(job)
         
-        return deduplicated_jobs
+        # Drop certification rows, table headers, and entries with neither company nor title
+        filtered_jobs = [
+            j for j in deduplicated_jobs
+            if not self._is_certification_or_table_entry(j)
+            and (j.company or j.title)  # keep if at least one of company or title is set
+        ]
+        return filtered_jobs
 
+    # -------------------------------------------------------------------------
+    # Education extraction
+    # -------------------------------------------------------------------------
     def extract_education(self, education_text: str) -> List[Education]:
         """Extract education information."""
         education_list = []
@@ -1999,6 +2310,9 @@ class ResumeParser:
         
         return education_list
 
+    # -------------------------------------------------------------------------
+    # Confidence score & projects
+    # -------------------------------------------------------------------------
     def calculate_confidence_score(self, parsed_resume: ParsedResume) -> float:
         """Calculate confidence score based on extracted information."""
         score = 0.0
@@ -2143,6 +2457,9 @@ class ResumeParser:
         
         return cleaned_projects
 
+    # -------------------------------------------------------------------------
+    # Main entry — parse_resume
+    # -------------------------------------------------------------------------
     def parse_resume(self, file_path: str) -> ParsedResume:
         """Parse resume from file with comprehensive extraction."""
         if not os.path.isfile(file_path):
@@ -2160,15 +2477,16 @@ class ResumeParser:
         if not text:
             logger.warning(f"No text extracted from {file_path}")
             return ParsedResume(file_path=file_path, contact=ContactInfo())
-        
+        text = self._normalize_raw_text(text)
+
         # Extract sections
         sections = self.find_sections(text)
         
         # Extract contact information
         contact = self.extract_contact_info(text)
-        
-        # Extract other information
-        # Extract professional summary with fallback
+
+        # Professional summary: prefer section content, then fallback regex on full text
+        professional_summary = ""
         professional_summary_section = sections.get("professional_summary", "")
         if professional_summary_section and len(professional_summary_section.strip()) > 20:
             # Clean up: remove section header if present
@@ -2182,13 +2500,11 @@ class ResumeParser:
             if next_section_match:
                 professional_summary = professional_summary[:next_section_match.start()].strip()
             professional_summary = professional_summary.strip()
-        else:
+        if not professional_summary:
             # Fallback: search entire text for professional summary
-            # Look for section header and extract content after it, stopping at next section
             summary_patterns = [
                 r'(?:PROFESSIONAL\s+SUMMARY|SUMMARY|PROFILE|CAREER\s+SUMMARY|PROFESSIONAL\s+PROFILE|EXECUTIVE\s+SUMMARY|OBJECTIVE|CAREER\s+OBJECTIVE)[:\-]?\s*\n(.*?)(?=\n\s*(?:TECHNICAL\s+SKILLS|SKILLS|EXPERIENCE|EDUCATION|WORK\s+HISTORY|PROFESSIONAL\s+EXPERIENCE|CERTIFICATIONS)|$)',
             ]
-            professional_summary = ""
             for pattern in summary_patterns:
                 match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
                 if match:
@@ -2266,36 +2582,130 @@ class ResumeParser:
         
         return parsed_resume
 
+    # -------------------------------------------------------------------------
+    # Serialization — duration, dates, to_dict / response shape
+    # -------------------------------------------------------------------------
+    def _parse_duration_to_months(self, duration_str: Optional[str]) -> Optional[int]:
+        """Parse duration string like '5 years', '6 months', '2 years 3 months' to total months. Returns None if unparseable."""
+        if not duration_str or not duration_str.strip():
+            return None
+        s = duration_str.strip().lower()
+        total = 0
+        # e.g. "2 years 3 months", "5 years", "6 months"
+        years_m = re.search(r"(\d+)\s*year", s)
+        if years_m:
+            total += int(years_m.group(1)) * 12
+        months_m = re.search(r"(\d+)\s*month", s)
+        if months_m:
+            total += int(months_m.group(1))
+        return total if total else None
+
+    def _normalize_date_to_iso(self, date_str: Optional[str]) -> Optional[str]:
+        """Try to normalize date string to YYYY-MM-DD. Returns original string or None if empty."""
+        if not date_str or not date_str.strip():
+            return None
+        s = date_str.strip()
+        # Normalize apostrophes and collapse spaces
+        s = re.sub(r"['\u2018\u2019]", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        # Expand month+2-digit year (e.g. "Oct 22", "May'22") to 4-digit year
+        def two_digit_year(match):
+            mo, yr = match.group(1), match.group(2)
+            y = int(yr)
+            year_4 = 2000 + y if y <= 50 else 1900 + y  # 00-50 -> 2000-2050, 51-99 -> 1951-1999
+            return f"{mo} {year_4}"
+        s = re.sub(r"([A-Za-z]{3,9})\s*['\s]*(\d{2})(?!\d)", two_digit_year, s, flags=re.IGNORECASE)
+        for fmt in ("%Y-%m-%d", "%Y-%m", "%m/%d/%Y", "%m/%Y", "%d/%m/%Y", "%b %Y", "%B %Y", "%b %y", "%B %y", "%Y"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return s
+
+    def _experience_item_to_response(self, job: JobExperience) -> Dict[str, Any]:
+        """Build one experience item with fixed keys: company.name, employmentType, title, department, startDate, endDate, isCurrent, durationInMonths, description."""
+        end_raw = (job.end_date or "").strip().lower()
+        is_current = not job.end_date or not job.end_date.strip() or end_raw in (
+            "present", "current", "now", "till date", "till now", "tilldate", "tillnow", "to present"
+        )
+        start_date = self._normalize_date_to_iso(job.start_date) if job.start_date else None
+        end_date = None if is_current else (self._normalize_date_to_iso(job.end_date) if job.end_date else None)
+        duration_months = self._parse_duration_to_months(job.duration)
+        # If duration string wasn't parseable, compute from start/end dates when possible
+        if duration_months is None and start_date:
+            try:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                end_dt = datetime.today() if is_current else (datetime.strptime(end_date, "%Y-%m-%d") if end_date else None)
+                if end_dt and end_dt >= start_dt:
+                    duration_months = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month)
+                    if duration_months < 0:
+                        duration_months = None
+            except (ValueError, TypeError):
+                pass
+        description = "\n".join(job.responsibilities).strip() if job.responsibilities else ""
+        # Don't use date-range-only or location-style text as title in response
+        title_out = job.title or ""
+        if self._is_date_range_only(title_out) or self._is_location_or_context_title(title_out):
+            title_out = ""
+        return {
+            "company": {"name": job.company or ""},
+            "employmentType": job.employment_type or "",
+            "title": title_out,
+            "department": job.department or "",
+            "startDate": start_date,
+            "endDate": end_date,
+            "isCurrent": is_current,
+            "durationInMonths": duration_months,
+            "description": description,
+        }
+
+    def _contact_to_response(self, contact: ContactInfo) -> Dict[str, Any]:
+        """Build contact object: firstName, middleName, lastName, fullName, email, phone, linkedinUrl, githubUrl, whatsapp, dateOfBirth, facebook, gender. Missing values are empty strings."""
+        name = (contact.name or "").strip()
+        parts = name.split() if name else []
+        if len(parts) == 0:
+            first_name, middle_name, last_name = "", "", ""
+        elif len(parts) == 1:
+            first_name, middle_name, last_name = parts[0], "", ""
+        else:
+            first_name = parts[0]
+            last_name = parts[-1]
+            middle_name = " ".join(parts[1:-1]) if len(parts) > 2 else ""
+        return {
+            "firstName": first_name,
+            "middleName": middle_name,
+            "lastName": last_name,
+            "fullName": name,
+            "email": contact.email or "",
+            "phone": contact.phone or "",
+            "linkedinUrl": contact.linkedin or "",
+            "githubUrl": contact.github or "",
+            "whatsapp": contact.whatsapp or "",
+            "dateOfBirth": contact.date_of_birth or "",
+            "facebook": contact.facebook or "",
+            "gender": contact.gender or "",
+        }
+
     def to_dict(self, parsed_resume: ParsedResume) -> Dict[str, Any]:
         """Convert ParsedResume to dictionary for JSON serialization."""
         result = asdict(parsed_resume)
         
+        # Replace contact with fixed response shape (firstName, middleName, lastName, fullName, email, phone, linkedinUrl, githubUrl, whatsapp, dateOfBirth, facebook, gender)
+        if result.get("contact"):
+            result["contact"] = self._contact_to_response(parsed_resume.contact)
+        
+        # Replace experience with fixed response shape (company.name, employmentType, title, department, startDate, endDate, isCurrent, durationInMonths, description)
+        exp_list = parsed_resume.experience or []
+        result["experience"] = [self._experience_item_to_response(j) for j in exp_list]
+        
         # Add experience count above the experience section
-        experience_list = result.get("experience") or []
-        result["experience_count"] = len(experience_list)
+        result["experience_count"] = len(result["experience"])
         keys = list(result.keys())
         keys.remove("experience_count")
         idx = keys.index("experience") if "experience" in keys else len(keys)
         keys.insert(idx, "experience_count")
         result = {k: result[k] for k in keys}
-        
-        # Remove None values from contact (location, linkedin, github)
-        if result.get("contact"):
-            contact = result["contact"]
-            if contact.get("location") is None:
-                contact.pop("location", None)
-            if contact.get("linkedin") is None:
-                contact.pop("linkedin", None)
-            if contact.get("github") is None:
-                contact.pop("github", None)
-        
-        # Remove None location and company values from experience entries
-        if result.get("experience"):
-            for job in result["experience"]:
-                if job.get("location") is None:
-                    job.pop("location", None)
-                if job.get("company") is None:
-                    job.pop("company", None)
         
         # Remove None location and gpa values from education entries
         if result.get("education"):
