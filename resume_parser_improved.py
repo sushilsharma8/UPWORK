@@ -121,8 +121,8 @@ SECTION_KEYWORDS = {
     "contact": [
         "contact", "contact information", "personal information", "personal details"
     ],
-    "professional_summary": [
-        "professional summary", "summary", "profile", "career summary", 
+    "professionalSummary": [
+        "professional summary", "summary", "profile", "career summary",
         "professional profile", "executive summary", "objective", "career objective"
     ],
     "experience": [
@@ -261,7 +261,7 @@ class Education:
 class ParsedResume:
     file_path: str
     contact: ContactInfo
-    professional_summary: Optional[str] = None
+    professionalSummary: Optional[str] = None
     experience: List[JobExperience] = None
     education: List[Education] = None
     skills: List[str] = None
@@ -1512,7 +1512,7 @@ class ResumeParser:
         
         # 3. Extract from experience and summary sections
         experience_text = sections.get("experience", "")
-        summary_text = sections.get("professional_summary", "")
+        summary_text = sections.get("professionalSummary", "")
         combined_text = experience_text + " " + summary_text
         
         # Look for skill patterns in experience
@@ -2327,7 +2327,7 @@ class ResumeParser:
             score += 1.0
         
         # Professional summary (1 point)
-        if parsed_resume.professional_summary:
+        if parsed_resume.professionalSummary:
             score += 1.0
         
         # Experience (3 points)
@@ -2487,7 +2487,7 @@ class ResumeParser:
 
         # Professional summary: prefer section content, then fallback regex on full text
         professional_summary = ""
-        professional_summary_section = sections.get("professional_summary", "")
+        professional_summary_section = sections.get("professionalSummary", "")
         if professional_summary_section and len(professional_summary_section.strip()) > 20:
             # Clean up: remove section header if present
             professional_summary = professional_summary_section
@@ -2568,7 +2568,7 @@ class ResumeParser:
         parsed_resume = ParsedResume(
             file_path=file_path,
             contact=contact,
-            professional_summary=professional_summary,
+            professionalSummary=professional_summary,
             experience=experience,
             education=education,
             skills=skills,

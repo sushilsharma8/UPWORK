@@ -105,7 +105,7 @@ curl -X POST http://localhost:8000/parse/upload \
       "linkedin": null,
       "github": null
     },
-    "professional_summary": "Experienced software engineer...",
+    "professionalSummary": "Experienced software engineer...",
     "experience": [
       {
         "title": "Senior Software Engineer",
@@ -344,7 +344,7 @@ fly deploy
       linkedin: string | null;
       github: string | null;
     };
-    professional_summary: string | null;
+    professionalSummary: string | null;
     experience: Array<{
       title: string | null;
       company: string | null;
