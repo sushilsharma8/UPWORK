@@ -15,6 +15,8 @@ from datetime import datetime
 
 # When raw data (HTML format) exceeds this length, split into raw_data_1, raw_data_2, ...
 RAW_DATA_MAX_CHARS = 130_000
+SUPPORTED_FILE_EXTENSIONS = [".pdf", ".docx", ".doc"]
+SUPPORTED_FILE_TYPES_MESSAGE = "Invalid file type. Only PDF, DOCX, and DOC files are supported."
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Security, Depends
 from fastapi.security import APIKeyHeader
@@ -36,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Resume Parser API",
-    description="Parse resumes (PDF/DOCX) and extract structured information using NLP",
+    description="Parse resumes (PDF/DOCX/DOC) and extract structured information using NLP",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -189,7 +191,7 @@ async def health_check():
 
 @app.post("/parse/upload", response_model=ParseResponse, tags=["Parse"])
 async def parse_upload(
-    file: UploadFile = File(..., description="Resume file (PDF or DOCX)"),
+    file: UploadFile = File(..., description="Resume file (PDF, DOCX, or DOC)"),
     include_raw_text: bool = Query(False, description="Include raw text in response"),
     # api_key: str = Depends(get_api_key)
 ):
@@ -213,10 +215,10 @@ async def parse_upload(
     try:
         # Validate file extension
         file_extension = os.path.splitext(file.filename)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type. Only PDF and DOCX files are supported."
+                detail=SUPPORTED_FILE_TYPES_MESSAGE
             )
         
         # Read file content
@@ -275,10 +277,10 @@ async def parse_base64(
     try:
         # Determine file extension
         file_extension = os.path.splitext(request.file_name)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type. Only PDF and DOCX files are supported."
+                detail=SUPPORTED_FILE_TYPES_MESSAGE
             )
         
         # Decode base64 content
@@ -344,10 +346,10 @@ async def parse_s3(
         
         # Determine file extension from S3 key
         file_extension = os.path.splitext(request.s3_key)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type. Only PDF and DOCX files are supported."
+                detail=SUPPORTED_FILE_TYPES_MESSAGE
             )
         
         # Download from S3
@@ -418,7 +420,7 @@ async def parse_url(
         
         # Determine file extension from URL
         file_extension = os.path.splitext(url)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             # Try to detect from content-type
             file_extension = '.pdf'  # default
         
@@ -470,7 +472,7 @@ async def parse_url(
 
 @app.post("/parse/batch", response_model=BatchParseResponse, tags=["Parse"])
 async def parse_batch(
-    files: List[UploadFile] = File(..., description="Resume files (PDF or DOCX). Maximum 10 files."),
+    files: List[UploadFile] = File(..., description="Resume files (PDF, DOCX, or DOC). Maximum 10 files."),
     include_raw_text: bool = Query(False, description="Include raw text in response"),
     api_key: str = Depends(get_api_key)
 ):
@@ -526,8 +528,8 @@ async def parse_batch(
         try:
             # Validate file extension
             file_extension = os.path.splitext(file.filename)[1].lower()
-            if file_extension not in ['.pdf', '.docx']:
-                raise ValueError("Invalid file type. Only PDF and DOCX files are supported.")
+            if file_extension not in SUPPORTED_FILE_EXTENSIONS:
+                raise ValueError(SUPPORTED_FILE_TYPES_MESSAGE)
             
             # Read file content
             content = await file.read()

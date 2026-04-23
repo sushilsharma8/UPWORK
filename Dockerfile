@@ -6,7 +6,7 @@ WORKDIR ${LAMBDA_TASK_ROOT}
 
 # Install system dependencies
 RUN yum update -y && \
-    yum install -y gcc gcc-c++ make && \
+    yum install -y gcc gcc-c++ make antiword && \
     yum clean all
 
 # Copy requirements file

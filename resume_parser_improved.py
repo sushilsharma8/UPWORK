@@ -16,6 +16,9 @@ File structure (all in one file):
 import os
 import re
 import logging
+import shutil
+import subprocess
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -769,6 +772,72 @@ class ResumeParser:
         except Exception as e:
             logger.error(f"Error reading DOCX {path}: {e}")
             return ""
+
+    def extract_text_from_doc(self, path: str) -> str:
+        """Extract text from legacy .doc files using available system tools."""
+        # Try antiword first (commonly used for .doc)
+        if shutil.which("antiword"):
+            try:
+                result = subprocess.run(
+                    ["antiword", path],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout
+            except Exception as e:
+                logger.warning(f"antiword extraction failed for {path}: {e}")
+
+        # Fallback to catdoc if available
+        if shutil.which("catdoc"):
+            try:
+                result = subprocess.run(
+                    ["catdoc", path],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout
+            except Exception as e:
+                logger.warning(f"catdoc extraction failed for {path}: {e}")
+
+        # Last fallback: use LibreOffice headless conversion to plain text
+        soffice_binary = shutil.which("soffice") or shutil.which("libreoffice")
+        if soffice_binary:
+            try:
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    subprocess.run(
+                        [
+                            soffice_binary,
+                            "--headless",
+                            "--convert-to",
+                            "txt:Text",
+                            "--outdir",
+                            tmp_dir,
+                            path,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    output_txt = os.path.join(
+                        tmp_dir,
+                        f"{os.path.splitext(os.path.basename(path))[0]}.txt",
+                    )
+                    if os.path.exists(output_txt):
+                        with open(output_txt, "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read()
+                        if text.strip():
+                            return text
+            except Exception as e:
+                logger.warning(f"LibreOffice DOC conversion failed for {path}: {e}")
+
+        raise ValueError(
+            "DOC parsing is unavailable in this runtime. "
+            "Install one of: antiword, catdoc, or LibreOffice (soffice)."
+        )
 
     # -------------------------------------------------------------------------
     # Contact — name, email verification, contact info, location
@@ -2471,8 +2540,10 @@ class ResumeParser:
             text = self.extract_text_from_pdf(file_path)
         elif ext == ".docx":
             text = self.extract_text_from_docx(file_path)
+        elif ext == ".doc":
+            text = self.extract_text_from_doc(file_path)
         else:
-            raise ValueError("Unsupported file type. Only PDF and DOCX are supported.")
+            raise ValueError("Unsupported file type. Only PDF, DOCX, and DOC are supported.")
         
         if not text:
             logger.warning(f"No text extracted from {file_path}")

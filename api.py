@@ -15,8 +15,10 @@ from datetime import datetime
 
 # When raw data (HTML format) exceeds this length, split into raw_data_1, raw_data_2, ...
 RAW_DATA_MAX_CHARS = 130_000
+SUPPORTED_FILE_EXTENSIONS = [".pdf", ".docx", ".doc"]
+SUPPORTED_FILE_TYPES_MESSAGE = "Invalid file type. Only PDF, DOCX, and DOC files are supported."
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Security, Depends
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body, Query, Security, Depends
 from fastapi.security import APIKeyHeader
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Resume Parser API",
-    description="Parse resumes (PDF/DOCX) and extract structured information using NLP",
+    description="Parse resumes (PDF/DOCX/DOC) and extract structured information using NLP",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -77,6 +79,8 @@ class Base64FileRequest(BaseModel):
     file_content: str = Field(..., description="Base64 encoded file content")
     file_name: str = Field(..., description="Original filename")
     include_raw_text: bool = Field(False, description="Include raw text in response")
+    parserRequestedAt: Optional[str] = Field(None, description="Request timestamp (e.g. ISO 8601 UTC); echoed in response")
+    parserRecordId: Optional[str] = Field(None, description="Client record ID (e.g. Salesforce Id); echoed in response")
 
 class S3FileRequest(BaseModel):
     """Request model for S3 file references"""
@@ -189,8 +193,10 @@ async def health_check():
 
 @app.post("/parse/upload", response_model=ParseResponse, tags=["Parse"])
 async def parse_upload(
-    file: UploadFile = File(..., description="Resume file (PDF or DOCX)"),
+    file: UploadFile = File(..., description="Resume file (PDF, DOCX, or DOC)"),
     include_raw_text: bool = Query(False, description="Include raw text in response"),
+    parserRequestedAt: Optional[str] = Form(None, description="Request timestamp (e.g. ISO 8601 UTC); echoed in response"),
+    parserRecordId: Optional[str] = Form(None, description="Client record ID (e.g. Salesforce Id); echoed in response"),
     # api_key: str = Depends(get_api_key)
 ):
     """
@@ -199,6 +205,7 @@ async def parse_upload(
     Supports:
     - PDF files
     - DOCX files
+    - DOC files
     
     Returns structured data including:
     - Contact information
@@ -213,10 +220,10 @@ async def parse_upload(
     try:
         # Validate file extension
         file_extension = os.path.splitext(file.filename)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type. Only PDF and DOCX files are supported."
+                detail=SUPPORTED_FILE_TYPES_MESSAGE
             )
         
         # Read file content
@@ -236,12 +243,17 @@ async def parse_upload(
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
 
             logger.info(f"Successfully parsed {file.filename} in {processing_time:.2f}ms")
-            
-            return {
+
+            response = {
                 "success": True,
                 **resume_dict,
                 "processing_time_ms": processing_time
             }
+            if parserRequestedAt is not None:
+                response["parserRequestedAt"] = parserRequestedAt
+            if parserRecordId is not None:
+                response["parserRecordId"] = parserRecordId
+            return response
 
         finally:
             # Clean up temporary file
@@ -275,15 +287,26 @@ async def parse_base64(
     try:
         # Determine file extension
         file_extension = os.path.splitext(request.file_name)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type. Only PDF and DOCX files are supported."
+                detail=SUPPORTED_FILE_TYPES_MESSAGE
             )
         
-        # Decode base64 content
+        # Decode base64 content.
+        # Clients often send a data-URI prefix (e.g. data:application/...;base64,....),
+        # which must be removed before decoding or binary formats like DOCX can break.
         try:
-            file_bytes = base64.b64decode(request.file_content)
+            base64_content = request.file_content.strip()
+            if "," in base64_content and ";base64" in base64_content.split(",", 1)[0].lower():
+                base64_content = base64_content.split(",", 1)[1].strip()
+
+            # Add missing padding if caller trimmed trailing '='
+            missing_padding = len(base64_content) % 4
+            if missing_padding:
+                base64_content += "=" * (4 - missing_padding)
+
+            file_bytes = base64.b64decode(base64_content, validate=True)
         except Exception as e:
             raise HTTPException(
                 status_code=400,
@@ -304,12 +327,17 @@ async def parse_base64(
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
 
             logger.info(f"Successfully parsed base64 file in {processing_time:.2f}ms")
-            
-            return {
+
+            response = {
                 "success": True,
                 **resume_dict,
                 "processing_time_ms": processing_time
             }
+            if request.parserRequestedAt is not None:
+                response["parserRequestedAt"] = request.parserRequestedAt
+            if request.parserRecordId is not None:
+                response["parserRecordId"] = request.parserRecordId
+            return response
 
         finally:
             # Clean up temporary file
@@ -344,10 +372,10 @@ async def parse_s3(
         
         # Determine file extension from S3 key
         file_extension = os.path.splitext(request.s3_key)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type. Only PDF and DOCX files are supported."
+                detail=SUPPORTED_FILE_TYPES_MESSAGE
             )
         
         # Download from S3
@@ -418,7 +446,7 @@ async def parse_url(
         
         # Determine file extension from URL
         file_extension = os.path.splitext(url)[1].lower()
-        if file_extension not in ['.pdf', '.docx']:
+        if file_extension not in SUPPORTED_FILE_EXTENSIONS:
             # Try to detect from content-type
             file_extension = '.pdf'  # default
         
@@ -470,7 +498,7 @@ async def parse_url(
 
 @app.post("/parse/batch", response_model=BatchParseResponse, tags=["Parse"])
 async def parse_batch(
-    files: List[UploadFile] = File(..., description="Resume files (PDF or DOCX). Maximum 10 files."),
+    files: List[UploadFile] = File(..., description="Resume files (PDF, DOCX, or DOC). Maximum 10 files."),
     include_raw_text: bool = Query(False, description="Include raw text in response"),
     api_key: str = Depends(get_api_key)
 ):
@@ -485,6 +513,7 @@ async def parse_batch(
     Supports:
     - PDF files
     - DOCX files
+    - DOC files
     - Maximum 10 files per request
     
     Returns structured data for each resume including:
@@ -526,8 +555,8 @@ async def parse_batch(
         try:
             # Validate file extension
             file_extension = os.path.splitext(file.filename)[1].lower()
-            if file_extension not in ['.pdf', '.docx']:
-                raise ValueError("Invalid file type. Only PDF and DOCX files are supported.")
+            if file_extension not in SUPPORTED_FILE_EXTENSIONS:
+                raise ValueError(SUPPORTED_FILE_TYPES_MESSAGE)
             
             # Read file content
             content = await file.read()
